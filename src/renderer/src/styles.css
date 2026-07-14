@@ -32,9 +32,19 @@ button { cursor: pointer; }
 .global-toolbar { position: absolute; z-index: 24; inset: 0 0 auto; height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 86px; border-bottom: 1px solid var(--line); background: var(--toolbar-bg); box-shadow: 0 1px 0 rgba(255, 255, 255, .45) inset; backdrop-filter: blur(24px) saturate(150%); -webkit-backdrop-filter: blur(24px) saturate(150%); -webkit-app-region: drag; }
 .global-toolbar button, .global-toolbar select, .global-toolbar details, .workspace-actions { -webkit-app-region: no-drag; }
 .context-actions { display: flex; align-items: center; gap: 6px; }
-.job-draft-action { max-width: 150px; overflow: hidden; border-color: rgba(0, 113, 227, .24); color: var(--blue); text-overflow: ellipsis; white-space: nowrap; }
-.job-draft-action.active { border-color: rgba(175, 126, 235, .3); color: #6941a5; background: rgba(175, 126, 235, .1); }
-.job-draft-indicator { max-width: 130px; overflow: hidden; padding: 4px 8px; border-radius: 999px; color: #6941a5; background: rgba(175, 126, 235, .11); font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; -webkit-app-region: no-drag; }
+.job-draft-menu { position: relative; width: 138px; flex: none; }
+.job-draft-menu summary { position: relative; height: 32px; display: flex; align-items: center; padding: 0 27px 0 10px; overflow: hidden; border: 1px solid rgba(175, 126, 235, .3); border-radius: 8px; color: #6941a5; background: rgba(175, 126, 235, .08); cursor: pointer; list-style: none; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.job-draft-menu summary::-webkit-details-marker { display: none; }
+.job-draft-menu summary::after { position: absolute; top: 50%; right: 10px; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; content: ''; transform: translateY(-70%) rotate(45deg); }
+.job-draft-menu.disabled { pointer-events: none; opacity: .45; }
+.job-draft-menu-options { position: absolute; z-index: 70; top: calc(100% + 7px); right: 0; width: 210px; display: grid; gap: 2px; padding: 5px; border: 1px solid var(--line); border-radius: 11px; background: var(--control-hover); box-shadow: 0 12px 34px rgba(0, 0, 0, .2); }
+.job-draft-menu-options button { width: 100%; min-height: 30px; display: grid; grid-template-columns: 17px minmax(0, 1fr); align-items: center; gap: 5px; overflow: hidden; padding: 4px 8px; border: 0; border-radius: 7px; color: var(--text); background: transparent; box-shadow: none; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.job-draft-menu-options button:hover:not(:disabled) { border: 0; background: rgba(0, 113, 227, .09); }
+.job-draft-menu-options button.selected { color: #6941a5; font-weight: 650; background: rgba(175, 126, 235, .09); }
+.job-draft-menu-options .new-draft-option { color: var(--blue); }
+.job-draft-menu-options .delete-draft-option { color: #b13a34; }
+.draft-menu-separator { height: 1px; margin: 3px 5px; background: var(--line); }
+.stop-draft-action { color: #6941a5; }
 .toolbar-drag-space { min-width: 18px; flex: 1; align-self: stretch; }
 .toolbar-title { display: flex; align-items: baseline; gap: 7px; min-width: 0; white-space: nowrap; }
 .toolbar-title strong { font-size: 13px; font-weight: 650; }
@@ -345,7 +355,10 @@ tbody tr:hover { background: rgba(255, 255, 255, .76); }
 :root[data-theme='dark'] .workspace-actions button.codex-action:hover:not(:disabled) { color: #e3c7ff; background: rgba(147, 92, 214, .17); }
 :root[data-theme='dark'] .workspace-actions button.codex-action.active { color: #fff; background: linear-gradient(135deg, #8b5bd1, #6670df); }
 :root[data-theme='dark'] .workspace-actions button.codex-action.active .toolbar-shortcut { color: rgba(255, 255, 255, .82); background: rgba(255, 255, 255, .14); }
-:root[data-theme='dark'] .job-draft-action.active { border-color: rgba(216, 180, 254, .3); color: #d8b4fe; background: rgba(147, 92, 214, .15); }
+:root[data-theme='dark'] .job-draft-menu summary { border-color: rgba(216, 180, 254, .3); color: #d8b4fe; background: rgba(147, 92, 214, .15); }
+:root[data-theme='dark'] .job-draft-menu-options button.selected { color: #d8b4fe; background: rgba(147, 92, 214, .15); }
+:root[data-theme='dark'] .job-draft-menu-options .delete-draft-option { color: #ff8a84; }
+:root[data-theme='dark'] .stop-draft-action { color: #d8b4fe; }
 :root[data-theme='dark'] .toolbar-divider { background: rgba(255, 255, 255, .12); }
 :root[data-theme='dark'] .toolbar-more summary { border-color: var(--line); color: #d1d1d6; background: var(--control-bg); }
 :root[data-theme='dark'] .change-review-chip { color: #d1d1d6; background: rgba(255, 255, 255, .07); }

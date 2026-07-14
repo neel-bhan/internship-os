@@ -20,7 +20,7 @@ export function installBrowserPreviewApi(): void {
     activeProfileId: 'general-swe',
     profileName: 'General SWE',
     profiles: RESUME_PROFILES,
-    jobDraft: { exists: false, active: false, name: null },
+    jobDraft: { exists: false, active: false, id: null, name: null, drafts: [] },
     lastCompile: { ok: true, pages: 1, compiler: 'pdflatex', message: 'Compiled successfully with pdflatex.', errors: [], compiledAt: new Date().toISOString() },
     lastChange: {
       summary: '2 lines rewritten',
@@ -57,22 +57,26 @@ export function installBrowserPreviewApi(): void {
           profileName: profile.name,
           hasPdf: false,
           pdfRevision: null,
-          jobDraft: { exists: false, active: false, name: null },
+          jobDraft: { exists: false, active: false, id: null, name: null, drafts: [] },
           lastCompile: null,
           lastChange: null
         }
         return resume
       },
       createJobDraft: async (name: string) => {
-        resume = { ...resume, jobDraft: { exists: true, active: true, name } }
+        const draft = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }
+        resume = { ...resume, jobDraft: { exists: true, active: true, id: draft.id, name, drafts: [draft, ...resume.jobDraft.drafts] } }
         return resume
       },
-      setJobDraftActive: async (active: boolean) => {
-        resume = { ...resume, jobDraft: { ...resume.jobDraft, active } }
+      selectJobDraft: async (draftId: string | null) => {
+        const draft = resume.jobDraft.drafts.find((item) => item.id === draftId) ?? null
+        resume = { ...resume, jobDraft: { ...resume.jobDraft, active: Boolean(draft), id: draft?.id ?? null, name: draft?.name ?? null } }
         return resume
       },
-      discardJobDraft: async () => {
-        resume = { ...resume, jobDraft: { exists: false, active: false, name: null } }
+      discardJobDraft: async (draftId: string) => {
+        const drafts = resume.jobDraft.drafts.filter((draft) => draft.id !== draftId)
+        const removedActive = resume.jobDraft.id === draftId
+        resume = { ...resume, jobDraft: { exists: drafts.length > 0, active: removedActive ? false : resume.jobDraft.active, id: removedActive ? null : resume.jobDraft.id, name: removedActive ? null : resume.jobDraft.name, drafts } }
         return resume
       },
       saveAndCompile: async (source: string) => {

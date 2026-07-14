@@ -39,44 +39,48 @@ export class AppPaths {
     return join(this.resumeRoot, 'previews', profileId, 'latest.pdf')
   }
 
-  jobDraftDir(profileId: string): string {
+  jobDraftRoot(profileId: string): string {
     return join(this.resumeRoot, 'job-drafts', profileId)
   }
 
-  jobDraftSourceDir(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'source')
+  jobDraftDir(profileId: string, draftId: string): string {
+    return join(this.jobDraftRoot(profileId), draftId)
   }
 
-  jobDraftSourceFile(profileId: string): string {
-    return join(this.jobDraftSourceDir(profileId), 'main.tex')
+  jobDraftSourceDir(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'source')
   }
 
-  jobDraftPdf(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'current.pdf')
+  jobDraftSourceFile(profileId: string, draftId: string): string {
+    return join(this.jobDraftSourceDir(profileId, draftId), 'main.tex')
   }
 
-  jobDraftPreviewPdf(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'latest-preview.pdf')
+  jobDraftPdf(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'current.pdf')
   }
 
-  jobDraftMetadata(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'draft.json')
+  jobDraftPreviewPdf(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'latest-preview.pdf')
   }
 
-  jobDraftHistoryDir(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'history', 'snapshots')
+  jobDraftMetadata(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'draft.json')
   }
 
-  jobDraftCompileHistoryDir(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'history', 'compiles')
+  jobDraftHistoryDir(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'history', 'snapshots')
   }
 
-  jobDraftChangeReviewFile(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'history', 'last-change.json')
+  jobDraftCompileHistoryDir(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'history', 'compiles')
   }
 
-  jobDraftCandidatesDir(profileId: string): string {
-    return join(this.jobDraftDir(profileId), 'candidates')
+  jobDraftChangeReviewFile(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'history', 'last-change.json')
+  }
+
+  jobDraftCandidatesDir(profileId: string, draftId: string): string {
+    return join(this.jobDraftDir(profileId, draftId), 'candidates')
   }
 
   historyDir(profileId: string): string {

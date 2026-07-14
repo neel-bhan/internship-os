@@ -92,10 +92,12 @@ describe('ResumeManager', () => {
     expect(restoredGeneral.hasPdf).toBe(true)
 
     const amazonDraft = manager.createJobDraft('Amazon')
-    expect(amazonDraft.jobDraft).toEqual({ exists: true, active: true, name: 'Amazon' })
+    expect(amazonDraft.jobDraft).toMatchObject({ exists: true, active: true, name: 'Amazon' })
+    expect(amazonDraft.jobDraft.drafts).toHaveLength(1)
+    const amazonDraftId = amazonDraft.jobDraft.id!
     const compiledDraft = await manager.saveAndCompile(onePageLatex('Amazon-specific line'))
     expect(compiledDraft.lastCompile?.ok).toBe(true)
-    expect(readFileSync(paths.jobDraftSourceFile('general-swe'), 'utf8')).toContain('Amazon-specific line')
+    expect(readFileSync(paths.jobDraftSourceFile('general-swe', amazonDraftId), 'utf8')).toContain('Amazon-specific line')
     expect(readFileSync(paths.sourceFile('general-swe'), 'utf8')).toContain('Updated line')
 
     const draftArchive = manager.archiveForApplication(
@@ -108,11 +110,17 @@ describe('ResumeManager', () => {
       jobDraft: { name: 'Amazon' }
     })
 
-    const templateAgain = manager.setJobDraftActive(false)
+    const googleDraft = manager.createJobDraft('Google')
+    expect(googleDraft.jobDraft.drafts).toHaveLength(2)
+    expect(googleDraft.source).toContain('Updated line')
+    expect(googleDraft.source).not.toContain('Amazon-specific line')
+
+    const templateAgain = manager.selectJobDraft(null)
     expect(templateAgain.source).toContain('Updated line')
-    expect(templateAgain.jobDraft).toEqual({ exists: true, active: false, name: 'Amazon' })
-    expect(manager.setJobDraftActive(true).source).toContain('Amazon-specific line')
-    expect(manager.discardJobDraft().jobDraft).toEqual({ exists: false, active: false, name: null })
+    expect(templateAgain.jobDraft).toMatchObject({ exists: true, active: false, id: null, name: null })
+    expect(manager.selectJobDraft(amazonDraftId).source).toContain('Amazon-specific line')
+    expect(manager.discardJobDraft(amazonDraftId).jobDraft).toMatchObject({ exists: true, active: false, id: null })
+    expect(manager.discardJobDraft(googleDraft.jobDraft.id!).jobDraft).toMatchObject({ exists: false, active: false, id: null, name: null })
     expect(manager.getState().source).toContain('Updated line')
 
     manager.selectProfile('backend')
@@ -123,6 +131,26 @@ describe('ResumeManager', () => {
       profileName: 'Backend',
       jobDraft: { exists: true, active: true, name: 'Stripe' }
     })
+  })
+
+  it('migrates an existing single job draft into the multi-draft layout', () => {
+    const root = temporaryRoot()
+    const defaultSource = join(root, 'default.tex')
+    writeFileSync(defaultSource, onePageLatex('Template line'))
+    const paths = new AppPaths(join(root, 'data'), join(root, 'downloads'))
+    const legacyDraftRoot = paths.jobDraftRoot('general-swe')
+    mkdirSync(join(legacyDraftRoot, 'source'), { recursive: true })
+    writeFileSync(join(legacyDraftRoot, 'source', 'main.tex'), onePageLatex('Legacy Amazon line'))
+    writeFileSync(join(legacyDraftRoot, 'draft.json'), JSON.stringify({ name: 'Amazon', createdAt: '2026-07-14T12:00:00.000Z' }))
+    mkdirSync(paths.resumeRoot, { recursive: true })
+    writeFileSync(paths.activeProfileFile, JSON.stringify({ activeProfileId: 'general-swe', activeJobDraftProfiles: ['general-swe'] }))
+
+    const state = new ResumeManager(paths, defaultSource).getState()
+    expect(state.source).toContain('Legacy Amazon line')
+    expect(state.jobDraft).toMatchObject({ exists: true, active: true, name: 'Amazon' })
+    expect(state.jobDraft.drafts).toHaveLength(1)
+    expect(existsSync(paths.jobDraftSourceFile('general-swe', state.jobDraft.id!))).toBe(true)
+    expect(existsSync(join(legacyDraftRoot, 'source', 'main.tex'))).toBe(false)
   })
 })
 

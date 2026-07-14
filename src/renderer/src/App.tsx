@@ -478,12 +478,12 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function setJobDraftActive(active: boolean): Promise<void> {
-    if (!resume || active === resume.jobDraft.active) return
+  async function selectJobDraft(draftId: string | null): Promise<void> {
+    if (!resume || draftId === resume.jobDraft.id) return
     if (source !== resume.source && !confirm('Switch resumes and discard unsaved editor changes?')) return
     setBusy(true)
     try {
-      const state = await window.internshipOS.resume.setJobDraftActive(active)
+      const state = await window.internshipOS.resume.selectJobDraft(draftId)
       setResume(state)
       setSource(state.source)
     } catch (error) {
@@ -493,19 +493,12 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function toggleJobDraft(): Promise<void> {
-    if (!resume) return
-    if (resume.jobDraft.active) return setJobDraftActive(false)
-    if (resume.jobDraft.exists) return setJobDraftActive(true)
-    openJobDraftDialog()
-  }
-
   async function discardJobDraft(): Promise<void> {
-    if (!resume?.jobDraft.exists) return
+    if (!resume?.jobDraft.id) return
     if (!confirm(`Discard the ${resume.jobDraft.name ?? 'job'} draft? The ${resume.profileName} template will not be changed.`)) return
     setBusy(true)
     try {
-      const state = await window.internshipOS.resume.discardJobDraft()
+      const state = await window.internshipOS.resume.discardJobDraft(resume.jobDraft.id)
       setResume(state)
       setSource(state.source)
     } catch (error) {
@@ -604,7 +597,6 @@ export default function App(): React.JSX.Element {
                 ))}
               </div>
             </details>
-            {resume?.jobDraft.active && <span className="job-draft-indicator">{resume.jobDraft.name} draft</span>}
             </>
           ) : (
             <div className="toolbar-title"><strong>Applications</strong><span>{stats.total} total · {stats.submitted} submitted</span></div>
@@ -613,21 +605,52 @@ export default function App(): React.JSX.Element {
           <div className="context-actions">
             {!agentOpen && view === 'resume' ? (
               <>
-                <button
-                  className={`job-draft-action ${resume?.jobDraft.active ? 'active' : ''}`}
-                  onClick={() => void toggleJobDraft()}
-                  disabled={busy || !resume}
-                  title={resume?.jobDraft.active ? `Return to the unchanged ${resume.profileName} template` : resume?.jobDraft.exists ? `Open the ${resume.jobDraft.name} draft` : 'Create a temporary job-specific copy'}
+                <details
+                  className={`job-draft-menu ${busy || !resume ? 'disabled' : ''}`}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open')
+                  }}
                 >
-                  {resume?.jobDraft.active ? 'Back to Template' : resume?.jobDraft.exists ? `Open ${resume.jobDraft.name}` : 'New Draft'}
-                </button>
+                  <summary title="Open or create a temporary job-specific resume">
+                    {resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : resume?.jobDraft.drafts.length ? `Drafts (${resume.jobDraft.drafts.length})` : 'Drafts'}
+                  </summary>
+                  <div className="job-draft-menu-options">
+                    <button
+                      className="new-draft-option"
+                      onClick={(event) => {
+                        event.currentTarget.closest('details')?.removeAttribute('open')
+                        openJobDraftDialog()
+                      }}
+                    ><span>＋</span>New Draft…</button>
+                    {resume?.jobDraft.drafts.map((draft) => (
+                      <button
+                        key={draft.id}
+                        className={draft.id === resume.jobDraft.id ? 'selected' : ''}
+                        onClick={(event) => {
+                          event.currentTarget.closest('details')?.removeAttribute('open')
+                          void selectJobDraft(draft.id)
+                        }}
+                      ><span>{draft.id === resume.jobDraft.id ? '✓' : ''}</span>{draft.name}</button>
+                    ))}
+                    {resume?.jobDraft.active && <span className="draft-menu-separator" />}
+                    {resume?.jobDraft.active && (
+                      <button
+                        className="delete-draft-option"
+                        onClick={(event) => {
+                          event.currentTarget.closest('details')?.removeAttribute('open')
+                          void discardJobDraft()
+                        }}
+                      ><span>×</span>Delete Current Draft</button>
+                    )}
+                  </div>
+                </details>
+                {resume?.jobDraft.active && <button className="stop-draft-action" onClick={() => void selectJobDraft(null)} disabled={busy}>Stop Draft</button>}
                 <button onClick={() => void resumeAction('undo')} disabled={busy}>Undo</button>
                 <button onClick={() => void window.internshipOS.resume.openPdf()} disabled={!resume?.hasPdf} title="Open current PDF">PDF</button>
                 <button className="primary" onClick={() => void resumeAction('save')} disabled={busy}>Save & Compile</button>
                 <details className="toolbar-more">
                   <summary aria-label="More resume actions" title="More resume actions">•••</summary>
                   <div className="toolbar-menu">
-                    {resume?.jobDraft.exists && <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void discardJobDraft() }} disabled={busy}>Discard {resume.jobDraft.name} draft</button>}
                     <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void resumeAction('compile') }} disabled={busy}>Compile without saving</button>
                     <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void window.internshipOS.resume.revealPdf() }} disabled={!resume?.hasPdf}>Reveal PDF in Finder</button>
                     <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void resumeAction('archive') }} disabled={!resume?.hasPdf}>Archive snapshot</button>

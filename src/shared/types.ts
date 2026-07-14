@@ -61,7 +61,15 @@ export interface ResumeState {
 export interface ResumeJobDraftState {
   exists: boolean
   active: boolean
+  id: string | null
   name: string | null
+  drafts: ResumeJobDraft[]
+}
+
+export interface ResumeJobDraft {
+  id: string
+  name: string
+  createdAt: string
 }
 
 export interface ResumeChangeReview {
@@ -114,9 +122,9 @@ export interface InternshipOsApi {
     get(): Promise<ResumeState>
     readPdf(): Promise<ArrayBuffer | null>
     selectProfile(profileId: string): Promise<ResumeState>
-    createJobDraft(name: string, replace?: boolean): Promise<ResumeState>
-    setJobDraftActive(active: boolean): Promise<ResumeState>
-    discardJobDraft(): Promise<ResumeState>
+    createJobDraft(name: string): Promise<ResumeState>
+    selectJobDraft(draftId: string | null): Promise<ResumeState>
+    discardJobDraft(draftId: string): Promise<ResumeState>
     saveAndCompile(source: string): Promise<ResumeState>
     compile(): Promise<ResumeState>
     undo(): Promise<ResumeState>
