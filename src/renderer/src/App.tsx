@@ -137,6 +137,22 @@ function PdfPreview({ revision }: { revision: string }): React.JSX.Element {
 }
 
 function CompileStatus({ result }: { result: CompileResult }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const statusRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setOpen(false)
+  }, [result.compiledAt])
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsideClick = (event: PointerEvent): void => {
+      if (!statusRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick)
+  }, [open])
+
   if (result.ok) {
     const pages = result.pages ?? 1
     return <span className="compile-pill success" title={result.message}>{pages} page{pages === 1 ? '' : 's'} · ready</span>
@@ -144,21 +160,26 @@ function CompileStatus({ result }: { result: CompileResult }): React.JSX.Element
 
   const label = result.pages ? `${result.pages} pages · error` : 'Compile failed'
   return (
-    <details
+    <div
+      ref={statusRef}
       className="compile-status"
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
-      }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') event.currentTarget.open = false
+        if (event.key === 'Escape') setOpen(false)
       }}
     >
-      <summary className="compile-pill failure">{label}</summary>
-      <div className="compile-popover">
-        <strong>{result.message}</strong>
-        {result.errors.map((compileError) => <code key={compileError}>{compileError}</code>)}
-      </div>
-    </details>
+      <button
+        className="compile-pill failure"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((visible) => !visible)}
+      >{label}</button>
+      {open && (
+        <div className="compile-popover" role="alert">
+          <strong>{result.message}</strong>
+          {result.errors.map((compileError) => <code key={compileError}>{compileError}</code>)}
+        </div>
+      )}
+    </div>
   )
 }
 

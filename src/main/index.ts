@@ -19,7 +19,7 @@ let resume: ResumeManager
 let codex: CodexClient
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1050,
@@ -35,16 +35,21 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+  mainWindow = window
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  window.once('closed', () => {
+    if (mainWindow === window) mainWindow = null
+  })
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void mainWindow.loadFile(join(currentDirectory, '../renderer/index.html'))
+    void window.loadFile(join(currentDirectory, '../renderer/index.html'))
   }
 }
 
@@ -56,7 +61,15 @@ app.whenReady().then(() => {
   resume.initialize()
   const workspaceRoot = app.isPackaged ? join(app.getPath('home'), 'swe-applications') : app.getAppPath()
   codex = new CodexClient(existsSync(workspaceRoot) ? workspaceRoot : app.getPath('home'), paths)
-  codex.setEventSink((event) => mainWindow?.webContents.send('codex:event', event))
+  codex.setEventSink((event) => {
+    const window = mainWindow
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
+    try {
+      window.webContents.send('codex:event', event)
+    } catch {
+      // Codex may finish a child process while Electron is tearing down the window.
+    }
+  })
 
   registerIpc()
   createWindow()
