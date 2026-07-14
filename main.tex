@@ -1,0 +1,235 @@
+%-------------------------
+% Resume in Latex
+% Author : Neel Bhansali
+% Based off of: https://github.com/sb2nov/resume
+% License : MIT
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\input{glyphtounicode}
+
+
+%----------FONT OPTIONS----------
+% sans-serif
+% \usepackage[sfdefault]{FiraSans}
+% \usepackage[sfdefault]{roboto}
+% \usepackage[sfdefault]{noto-sans}
+% \usepackage[default]{sourcesanspro}
+
+% serif
+% \usepackage{CormorantGaramond}
+% \usepackage{charter}
+
+
+\pagestyle{fancy}
+\fancyhf{} % clear all header and footer fields
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.7in}
+\addtolength{\textheight}{1.3in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Ensure that generate pdf is machine readable/ATS parsable
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small#1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{document}
+
+%----------HEADING----------
+% \begin{tabular*}{\textwidth}{l@{\extracolsep{\fill}}r}
+%   \textbf{\href{http://sourabhbajaj.com/}{\Large Sourabh Bajaj}} & Email : \href{mailto:sourabh@sourabhbajaj.com}{sourabh@sourabhbajaj.com}\\
+%   \href{http://sourabhbajaj.com/}{http://www.sourabhbajaj.com} & Mobile : +1-123-456-7890 \\
+% \end{tabular*}
+
+\begin{center}
+        \textbf{\Huge\scshape Neel Bhansali} \\ \vspace{2pt}
+    \small 
+    \href{https://neelbhansali.com}{\underline{\textbf{neelbhansali.com}}} $|$
+    \href{https://github.com/neel-bhan}{\underline{github.com/neel-bhan}} $|$
+    \href{https://www.linkedin.com/in/neel-bhansali-506a42265/}{\underline{linkedin.com/in/neel-bhansali}} $|$
+    \href{mailto:neelbh99@gmail.com}{\underline{neelbh99@gmail.com}} $|$
+    817-659-4024
+\end{center}
+
+
+%-----------EDUCATION-----------
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {University of Wisconsin Madison}{Madison, Wisconsin}
+      {Bachelor of Science in Computer Science, Data Science \textbf{GPA:3.73}}{Expected Graduation 2028}
+  \resumeSubHeadingListEnd
+
+
+%-----------EXPERIENCE-----------
+\section{Experience}
+  \resumeSubHeadingListStart
+
+
+      
+% -----------Multiple Positions Heading-----------
+%    \resumeSubSubheading
+%     {Software Engineer I}{Oct 2014 - Sep 2016}
+%     \resumeItemListStart
+%        \resumeItem{Apache Beam}
+%          {Apache Beam is a unified model for defining both batch and streaming data-parallel processing pipelines}
+%     \resumeItemListEnd
+%    \resumeSubHeadingListEnd
+%-------------------------------------------
+\resumeSubheading
+{Software Engineer Intern}{June 2026 -- Aug 2026}
+{DraftKings}{Boston, MA}
+\resumeItemListStart
+\resumeItem{Built a .NET service for a server-driven UI platform to validate, version, and serve dynamic CMS templates.}
+\resumeItem{Developed a drag-and-drop Template Builder that converts visual layouts into schema-valid JSON, validates templates upfront, persists version history, and feeds the live rendering pipeline.}
+\resumeItem{Implemented a Claude-powered agentic workflow to generate validated CMS templates from prompts.}
+\resumeItemListEnd
+
+\resumeSubheading
+    {Software Engineer Intern}{Sept 2025 -- Present}
+    {Represented Collective}{Madison, WI}
+    \resumeItemListStart
+        \resumeItem{Developed a HIPAA-compliant mobile health application for asthma patients using React Native (Expo)}
+        \resumeItem{Engineered a Express.js, Prisma, PostgreSQL backend, containerized with Docker, deployed on AWS ECS/RDS, featuring JWT-based access control, audit logging, and strict validation pipelines.}
+        \resumeItem{Implemented symptom tracking, medication adherence logging, and analytics dashboards.}
+    \resumeItemListEnd
+\resumeSubheading
+    {Software Engineer Intern}{June 2025 -- Aug 2025}
+    {Mini Orange}{Dallas, TX}
+    \resumeItemListStart
+        \resumeItem{Designed and implemented features for a secure, web-based Active Directory management platform, enabling enterprise-scale user/group/OU administration, audit logging, and MFA-enabled self-service password resets.}
+        \resumeItem{Created React frontend with dynamic forms, organizational management modules, and configurable CAPTCHA, improving operational efficiency and reducing admin configuration time.}
+        \resumeItem{ Built fault-tolerant .NET REST APIs with advanced error handling and monitoring pipelines.}
+    \resumeItemListEnd
+
+    \resumeSubheading
+    {Research Assistant}{May 2022 -- July 2022}
+    {University of Texas at Dallas}{Richardson, TX}
+    \resumeItemListStart
+        \resumeItem{Gained in-depth knowledge of AI/ML techniques including NN, CNNs, LSTMs, SVMs, RL, and Decision Trees.}
+\resumeItem{Developed a face recognition system using machine learning to enhance University security infrastructure.}
+        \resumeItem{Performed data cleaning, feature engineering, and hyperparameter tuning with Pytorch to optimize models.}
+        
+        
+    \resumeItemListEnd
+% \item \textbf{Academic Tutor, Eye Level Learning Center} \hfill Jan 2023 -- Current \\
+% Directed tutoring for 3rd–12th grade students, creating plans and collaborating with teachers to drive growth.
+\resumeSubHeadingListEnd
+
+%-----------PROJECTS-----------
+\section{Projects \& Leadership}
+    \resumeSubHeadingListStart
+\resumeProjectHeading
+    {\textbf{College Resale Platform} }{May 2025 -- Aug 2025}
+    \resumeItemListStart
+        \resumeItem{Built a university-exclusive marketplace focused on resale of textbooks and sports tickets, with automated school email verification, geolocation search, and web scraping to list real-time campus sporting events.}
+        \resumeItem{Architected and deployed a full-stack platform with React.js, TypeScript, Vite, Tailwind CSS for responsive UI and Node.js, Express.js, PostgreSQL backend (JWT auth, REST APIs), running on AWS (S3 for image storage + frontend hosting, RDS for PostgreSQL, ECS + Fargate for backend containers, VPC networking).}
+        \resumeItem{Engineered real-time chat and notifications via WebSockets enabling instant bidding and live ticket updates.}
+    \resumeItemListEnd
+
+\resumeProjectHeading
+    {\textbf{Agentic Portfolio Updater} }{Aug 2025 -- Present}
+  \resumeItemListStart
+    \resumeItem{Built an agentic AI pipeline that detects new GitHub repos via webhooks, generates project summaries with the OpenAI API, and submits PRs updating a Next.js/React portfolio site for seamless portfolio integration.}
+    \resumeItem{Designed a structured JSON/YAML schema for consistent project entries with automated tech stack detection and tagging, supporting scalable updates across projects; integrated README image parsing for project previews}
+    \resumeItem{Implemented AWS SQS, Lambda, S3 and GitHub Actions CI/CD with rollbacks, and PR validation.}
+  \resumeItemListEnd
+
+\resumeProjectHeading
+    {\textbf{AIFA (AI FOR ALL)} }{September 2022 -- Present}
+  \resumeItemListStart
+    \resumeItem{Developed comprehensive AI-centric educational modules and facilitated interactive workshops AI concepts}
+    \resumeItem{Organized hackathons with 200+ students, \$2000+ prizes, and sponsors including Google, GitHub, and Keurig.}
+  \resumeItemListEnd
+
+% \resumeProjectHeading
+%     {\textbf{Workout Generator}}{Aug 2024 -- Oct 2024}
+%     \resumeItemListStart
+%         \resumeItem{Developed a personalized workout generator using decision tree algorithms to recommend routines tailored to user inputs such as age, gender, fitness goals, and target muscle groups.}
+%         \resumeItem{Designed an interactive dashboard to let users adjust preferences and receive updated workout plans in real time.}
+%     \resumeItemListEnd
+    \resumeSubHeadingListEnd
+
+%
+%-----------PROGRAMMING SKILLS-----------
+\section{Technical Skills}
+\begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+        \textbf{Languages \& Cloud}{: Java, Python, JavaScript/TypeScript, C\#, SQL, AWS (Lambda, S3, ECS, RDS, VPC, Fargate)} \\
+        \textbf{Frameworks \& Libraries}{: React, Node.js, Express, Tailwind CSS, PyTorch, Pandas, NumPy} \\
+        \textbf{Databases \& Tools}{: PostgreSQL, MongoDB, OpenAI API, Docker, Git, GitHub Actions, APIs, WebSockets, JWT}
+    }}
+\end{itemize}
+
+%-------------------------------------------
+\end{document}
