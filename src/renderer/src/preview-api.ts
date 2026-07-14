@@ -20,6 +20,7 @@ export function installBrowserPreviewApi(): void {
     activeProfileId: 'general-swe',
     profileName: 'General SWE',
     profiles: RESUME_PROFILES,
+    jobDraft: { exists: false, active: false, name: null },
     lastCompile: { ok: true, pages: 1, compiler: 'pdflatex', message: 'Compiled successfully with pdflatex.', errors: [], compiledAt: new Date().toISOString() },
     lastChange: {
       summary: '2 lines rewritten',
@@ -56,9 +57,22 @@ export function installBrowserPreviewApi(): void {
           profileName: profile.name,
           hasPdf: false,
           pdfRevision: null,
+          jobDraft: { exists: false, active: false, name: null },
           lastCompile: null,
           lastChange: null
         }
+        return resume
+      },
+      createJobDraft: async (name: string) => {
+        resume = { ...resume, jobDraft: { exists: true, active: true, name } }
+        return resume
+      },
+      setJobDraftActive: async (active: boolean) => {
+        resume = { ...resume, jobDraft: { ...resume.jobDraft, active } }
+        return resume
+      },
+      discardJobDraft: async () => {
+        resume = { ...resume, jobDraft: { exists: false, active: false, name: null } }
         return resume
       },
       saveAndCompile: async (source: string) => {

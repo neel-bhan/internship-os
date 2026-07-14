@@ -32,6 +32,8 @@ button { cursor: pointer; }
 .global-toolbar { position: absolute; z-index: 24; inset: 0 0 auto; height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 86px; border-bottom: 1px solid var(--line); background: var(--toolbar-bg); box-shadow: 0 1px 0 rgba(255, 255, 255, .45) inset; backdrop-filter: blur(24px) saturate(150%); -webkit-backdrop-filter: blur(24px) saturate(150%); -webkit-app-region: drag; }
 .global-toolbar button, .global-toolbar select, .global-toolbar details, .workspace-actions { -webkit-app-region: no-drag; }
 .context-actions { display: flex; align-items: center; gap: 6px; }
+.job-draft-action { max-width: 150px; overflow: hidden; border-color: rgba(0, 113, 227, .24); color: var(--blue); text-overflow: ellipsis; white-space: nowrap; }
+.job-draft-action.active { border-color: rgba(175, 126, 235, .3); color: #6941a5; background: rgba(175, 126, 235, .1); }
 .toolbar-drag-space { min-width: 18px; flex: 1; align-self: stretch; }
 .toolbar-title { display: flex; align-items: baseline; gap: 7px; min-width: 0; white-space: nowrap; }
 .toolbar-title strong { font-size: 13px; font-weight: 650; }
@@ -333,6 +335,7 @@ tbody tr:hover { background: rgba(255, 255, 255, .76); }
 :root[data-theme='dark'] .workspace-actions button.codex-action:hover:not(:disabled) { color: #e3c7ff; background: rgba(147, 92, 214, .17); }
 :root[data-theme='dark'] .workspace-actions button.codex-action.active { color: #fff; background: linear-gradient(135deg, #8b5bd1, #6670df); }
 :root[data-theme='dark'] .workspace-actions button.codex-action.active .toolbar-shortcut { color: rgba(255, 255, 255, .82); background: rgba(255, 255, 255, .14); }
+:root[data-theme='dark'] .job-draft-action.active { border-color: rgba(216, 180, 254, .3); color: #d8b4fe; background: rgba(147, 92, 214, .15); }
 :root[data-theme='dark'] .toolbar-divider { background: rgba(255, 255, 255, .12); }
 :root[data-theme='dark'] .toolbar-more summary { border-color: var(--line); color: #d1d1d6; background: var(--control-bg); }
 :root[data-theme='dark'] .change-review-chip { color: #d1d1d6; background: rgba(255, 255, 255, .07); }

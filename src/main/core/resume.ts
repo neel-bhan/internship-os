@@ -40,6 +40,7 @@ interface DiffOperation {
 
 export class ResumeManager {
   private activeProfileId = RESUME_PROFILES[0].id
+  private activeJobDraftProfiles = new Set<string>()
   private initialized = false
 
   constructor(
@@ -73,10 +74,12 @@ export class ResumeManager {
       mkdirSync(this.paths.candidatesDir(profile.id), { recursive: true })
       mkdirSync(dirname(this.paths.profilePdf(profile.id)), { recursive: true })
       mkdirSync(dirname(this.paths.previewPdf(profile.id)), { recursive: true })
+      if (existsSync(this.paths.jobDraftSourceFile(profile.id))) this.ensureJobDraftDirectories(profile.id)
     }
 
     this.migrateLegacyGeneralProfile()
     this.activeProfileId = this.readActiveProfileId()
+    this.activeJobDraftProfiles = new Set(this.readActiveJobDraftProfileIds())
     this.writeActiveProfileId()
     this.syncPublishedPdf()
     this.initialized = true
@@ -99,6 +102,11 @@ export class ResumeManager {
       activeProfileId: profile.id,
       profileName: profile.name,
       profiles: RESUME_PROFILES.map((item) => ({ ...item })),
+      jobDraft: {
+        exists: this.jobDraftExists(),
+        active: this.isJobDraftActive(),
+        name: this.readJobDraftName()
+      },
       lastCompile: lastCompile ?? this.readLastCompile(),
       lastChange: this.readLastChange()
     }
@@ -119,6 +127,54 @@ export class ResumeManager {
     const profile = RESUME_PROFILES.find((item) => item.id === profileId)
     if (!profile) throw new Error(`Unknown resume profile: ${profileId}`)
     this.activeProfileId = profile.id
+    this.writeActiveProfileId()
+    this.syncPublishedPdf()
+    return this.getState()
+  }
+
+  createJobDraft(name: string, replace = false): ResumeState {
+    this.initialize()
+    const trimmedName = name.trim()
+    if (!trimmedName) throw new Error('Enter a company or job name for this draft.')
+    if (trimmedName.length > 80) throw new Error('Job draft names must be 80 characters or fewer.')
+
+    const draftDir = this.paths.jobDraftDir(this.activeProfileId)
+    if (this.jobDraftExists() && !replace) throw new Error('This template already has a job draft.')
+    if (existsSync(draftDir)) rmSync(draftDir, { recursive: true, force: true })
+
+    cpSync(this.paths.profileDir(this.activeProfileId), this.paths.jobDraftSourceDir(this.activeProfileId), { recursive: true })
+    this.ensureJobDraftDirectories(this.activeProfileId)
+    this.atomicWrite(
+      this.paths.jobDraftMetadata(this.activeProfileId),
+      JSON.stringify({ name: trimmedName, createdAt: new Date().toISOString() }, null, 2)
+    )
+
+    const templatePdf = this.paths.profilePdf(this.activeProfileId)
+    if (existsSync(templatePdf)) {
+      this.atomicCopy(templatePdf, this.paths.jobDraftPdf(this.activeProfileId))
+      this.atomicCopy(templatePdf, this.paths.jobDraftPreviewPdf(this.activeProfileId))
+    }
+
+    this.activeJobDraftProfiles.add(this.activeProfileId)
+    this.writeActiveProfileId()
+    this.syncPublishedPdf()
+    return this.getState()
+  }
+
+  setJobDraftActive(active: boolean): ResumeState {
+    this.initialize()
+    if (active && !this.jobDraftExists()) throw new Error('Create a job draft for this template first.')
+    if (active) this.activeJobDraftProfiles.add(this.activeProfileId)
+    else this.activeJobDraftProfiles.delete(this.activeProfileId)
+    this.writeActiveProfileId()
+    this.syncPublishedPdf()
+    return this.getState()
+  }
+
+  discardJobDraft(): ResumeState {
+    this.initialize()
+    this.activeJobDraftProfiles.delete(this.activeProfileId)
+    rmSync(this.paths.jobDraftDir(this.activeProfileId), { recursive: true, force: true })
     this.writeActiveProfileId()
     this.syncPublishedPdf()
     return this.getState()
@@ -364,6 +420,7 @@ export class ResumeManager {
           position: input.position,
           profileId: profile.id,
           profile: profile.name,
+          jobDraft: this.isJobDraftActive() ? { name: this.readJobDraftName() } : null,
           createdAt,
           pdfSha256: this.hashFile(join(archivePath, 'resume.pdf')),
           sourceFiles
@@ -487,8 +544,23 @@ export class ResumeManager {
     return RESUME_PROFILES[0].id
   }
 
+  private readActiveJobDraftProfileIds(): string[] {
+    if (!existsSync(this.paths.activeProfileFile)) return []
+    try {
+      const parsed = JSON.parse(readFileSync(this.paths.activeProfileFile, 'utf8')) as { activeJobDraftProfiles?: string[] }
+      return (parsed.activeJobDraftProfiles ?? []).filter((profileId) =>
+        RESUME_PROFILES.some((profile) => profile.id === profileId) && existsSync(this.paths.jobDraftSourceFile(profileId))
+      )
+    } catch {
+      return []
+    }
+  }
+
   private writeActiveProfileId(): void {
-    this.atomicWrite(this.paths.activeProfileFile, JSON.stringify({ activeProfileId: this.activeProfileId }, null, 2))
+    this.atomicWrite(
+      this.paths.activeProfileFile,
+      JSON.stringify({ activeProfileId: this.activeProfileId, activeJobDraftProfiles: [...this.activeJobDraftProfiles] }, null, 2)
+    )
   }
 
   private syncPublishedPdf(): void {
@@ -507,35 +579,75 @@ export class ResumeManager {
   }
 
   private activeProfileDir(): string {
-    return this.paths.profileDir(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftSourceDir(this.activeProfileId)
+      : this.paths.profileDir(this.activeProfileId)
   }
 
   private activeSourceFile(): string {
-    return this.paths.sourceFile(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftSourceFile(this.activeProfileId)
+      : this.paths.sourceFile(this.activeProfileId)
   }
 
   private activeProfilePdf(): string {
-    return this.paths.profilePdf(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftPdf(this.activeProfileId)
+      : this.paths.profilePdf(this.activeProfileId)
   }
 
   private activePreviewPdf(): string {
-    return this.paths.previewPdf(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftPreviewPdf(this.activeProfileId)
+      : this.paths.previewPdf(this.activeProfileId)
   }
 
   private activeHistoryDir(): string {
-    return this.paths.historyDir(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftHistoryDir(this.activeProfileId)
+      : this.paths.historyDir(this.activeProfileId)
   }
 
   private activeCompileHistoryDir(): string {
-    return this.paths.compileHistoryDir(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftCompileHistoryDir(this.activeProfileId)
+      : this.paths.compileHistoryDir(this.activeProfileId)
   }
 
   private activeChangeReviewFile(): string {
-    return this.paths.changeReviewFile(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftChangeReviewFile(this.activeProfileId)
+      : this.paths.changeReviewFile(this.activeProfileId)
   }
 
   private activeCandidatesDir(): string {
-    return this.paths.candidatesDir(this.activeProfileId)
+    return this.isJobDraftActive()
+      ? this.paths.jobDraftCandidatesDir(this.activeProfileId)
+      : this.paths.candidatesDir(this.activeProfileId)
+  }
+
+  private jobDraftExists(): boolean {
+    return existsSync(this.paths.jobDraftSourceFile(this.activeProfileId))
+  }
+
+  private isJobDraftActive(): boolean {
+    return this.activeJobDraftProfiles.has(this.activeProfileId) && this.jobDraftExists()
+  }
+
+  private readJobDraftName(): string | null {
+    if (!this.jobDraftExists()) return null
+    try {
+      const parsed = JSON.parse(readFileSync(this.paths.jobDraftMetadata(this.activeProfileId), 'utf8')) as { name?: string }
+      return parsed.name?.trim() || 'Job Draft'
+    } catch {
+      return 'Job Draft'
+    }
+  }
+
+  private ensureJobDraftDirectories(profileId: string): void {
+    mkdirSync(this.paths.jobDraftHistoryDir(profileId), { recursive: true })
+    mkdirSync(this.paths.jobDraftCompileHistoryDir(profileId), { recursive: true })
+    mkdirSync(this.paths.jobDraftCandidatesDir(profileId), { recursive: true })
   }
 
   private atomicWrite(destination: string, contents: string): void {

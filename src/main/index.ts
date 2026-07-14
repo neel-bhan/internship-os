@@ -119,6 +119,9 @@ function registerIpc(): void {
     return Uint8Array.from(readFileSync(path)).buffer
   })
   ipcMain.handle('resume:select-profile', (_event, profileId: string) => resume.selectProfile(profileId))
+  ipcMain.handle('resume:create-job-draft', (_event, name: string, replace = false) => resume.createJobDraft(name, replace))
+  ipcMain.handle('resume:set-job-draft-active', (_event, active: boolean) => resume.setJobDraftActive(active))
+  ipcMain.handle('resume:discard-job-draft', () => resume.discardJobDraft())
   ipcMain.handle('resume:save-and-compile', (_event, source: string) => resume.saveAndCompile(source))
   ipcMain.handle('resume:compile', () => resume.compile())
   ipcMain.handle('resume:undo', () => resume.undo())

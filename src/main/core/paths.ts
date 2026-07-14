@@ -39,6 +39,46 @@ export class AppPaths {
     return join(this.resumeRoot, 'previews', profileId, 'latest.pdf')
   }
 
+  jobDraftDir(profileId: string): string {
+    return join(this.resumeRoot, 'job-drafts', profileId)
+  }
+
+  jobDraftSourceDir(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'source')
+  }
+
+  jobDraftSourceFile(profileId: string): string {
+    return join(this.jobDraftSourceDir(profileId), 'main.tex')
+  }
+
+  jobDraftPdf(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'current.pdf')
+  }
+
+  jobDraftPreviewPdf(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'latest-preview.pdf')
+  }
+
+  jobDraftMetadata(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'draft.json')
+  }
+
+  jobDraftHistoryDir(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'history', 'snapshots')
+  }
+
+  jobDraftCompileHistoryDir(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'history', 'compiles')
+  }
+
+  jobDraftChangeReviewFile(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'history', 'last-change.json')
+  }
+
+  jobDraftCandidatesDir(profileId: string): string {
+    return join(this.jobDraftDir(profileId), 'candidates')
+  }
+
   historyDir(profileId: string): string {
     return join(this.resumeRoot, 'history', profileId, 'snapshots')
   }

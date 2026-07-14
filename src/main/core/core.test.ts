@@ -91,9 +91,38 @@ describe('ResumeManager', () => {
     expect(restoredGeneral.source).toContain('Updated line')
     expect(restoredGeneral.hasPdf).toBe(true)
 
+    const amazonDraft = manager.createJobDraft('Amazon')
+    expect(amazonDraft.jobDraft).toEqual({ exists: true, active: true, name: 'Amazon' })
+    const compiledDraft = await manager.saveAndCompile(onePageLatex('Amazon-specific line'))
+    expect(compiledDraft.lastCompile?.ok).toBe(true)
+    expect(readFileSync(paths.jobDraftSourceFile('general-swe'), 'utf8')).toContain('Amazon-specific line')
+    expect(readFileSync(paths.sourceFile('general-swe'), 'utf8')).toContain('Updated line')
+
+    const draftArchive = manager.archiveForApplication(
+      { company: 'Amazon', position: 'SWE Intern', status: 'Submitted', dateApplied: '2026-07-14', details: '' },
+      'application-amazon'
+    )
+    expect(readFileSync(join(draftArchive.archivePath, 'source', 'main.tex'), 'utf8')).toContain('Amazon-specific line')
+    expect(JSON.parse(readFileSync(join(draftArchive.archivePath, 'manifest.json'), 'utf8'))).toMatchObject({
+      applicationId: 'application-amazon',
+      jobDraft: { name: 'Amazon' }
+    })
+
+    const templateAgain = manager.setJobDraftActive(false)
+    expect(templateAgain.source).toContain('Updated line')
+    expect(templateAgain.jobDraft).toEqual({ exists: true, active: false, name: 'Amazon' })
+    expect(manager.setJobDraftActive(true).source).toContain('Amazon-specific line')
+    expect(manager.discardJobDraft().jobDraft).toEqual({ exists: false, active: false, name: null })
+    expect(manager.getState().source).toContain('Updated line')
+
     manager.selectProfile('backend')
+    manager.createJobDraft('Stripe')
     const restartedManager = new ResumeManager(paths, defaultSource)
-    expect(restartedManager.getState()).toMatchObject({ activeProfileId: 'backend', profileName: 'Backend' })
+    expect(restartedManager.getState()).toMatchObject({
+      activeProfileId: 'backend',
+      profileName: 'Backend',
+      jobDraft: { exists: true, active: true, name: 'Stripe' }
+    })
   })
 })
 
