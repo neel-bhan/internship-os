@@ -72,6 +72,7 @@ export class ResumeManager {
       mkdirSync(this.paths.compileHistoryDir(profile.id), { recursive: true })
       mkdirSync(this.paths.candidatesDir(profile.id), { recursive: true })
       mkdirSync(dirname(this.paths.profilePdf(profile.id)), { recursive: true })
+      mkdirSync(dirname(this.paths.previewPdf(profile.id)), { recursive: true })
     }
 
     this.migrateLegacyGeneralProfile()
@@ -86,12 +87,14 @@ export class ResumeManager {
     const profile = this.activeProfile()
     const sourceFile = this.activeSourceFile()
     const profilePdf = this.activeProfilePdf()
+    const previewPdf = this.activePreviewPdf()
     const hasPdf = existsSync(profilePdf)
+    const visiblePdf = existsSync(previewPdf) ? previewPdf : profilePdf
     return {
       source: readFileSync(sourceFile, 'utf8'),
       sourcePath: sourceFile,
       pdfPath: this.paths.publicPdf,
-      pdfRevision: hasPdf ? String(statSync(profilePdf).mtimeMs) : null,
+      pdfRevision: existsSync(visiblePdf) ? String(statSync(visiblePdf).mtimeMs) : null,
       hasPdf,
       activeProfileId: profile.id,
       profileName: profile.name,
@@ -103,6 +106,12 @@ export class ResumeManager {
 
   listProfiles(): ResumeProfile[] {
     return RESUME_PROFILES.map((profile) => ({ ...profile }))
+  }
+
+  getPreviewPdfPath(): string {
+    this.initialize()
+    const previewPdf = this.activePreviewPdf()
+    return existsSync(previewPdf) ? previewPdf : this.activeProfilePdf()
   }
 
   selectProfile(profileId: string): ResumeState {
@@ -158,6 +167,7 @@ export class ResumeManager {
     this.atomicCopy(oldSource, this.activeSourceFile())
     if (existsSync(oldPdf)) {
       this.atomicCopy(oldPdf, this.activeProfilePdf())
+      this.atomicCopy(oldPdf, this.activePreviewPdf())
       this.atomicCopy(oldPdf, this.paths.internalPdf)
       this.atomicCopy(oldPdf, this.paths.publicPdf)
     }
@@ -204,13 +214,14 @@ export class ResumeManager {
       const bytes = readFileSync(run.pdfPath)
       const pdf = await PDFDocument.load(bytes)
       const pages = pdf.getPageCount()
+      this.atomicCopy(run.pdfPath, this.activePreviewPdf())
       if (pages !== 1) {
         result = {
           ok: false,
           pages,
           compiler: run.compiler,
-          message: `Candidate rendered as ${pages} pages. It was not promoted.`,
-          errors: ['Resume must remain exactly one page. Shorten or replace content before compiling again.'],
+          message: `Compiled to ${pages} pages. Previewing this candidate.`,
+          errors: ['The upload resume remains the last valid one-page version. Shorten or replace content before publishing this candidate.'],
           compiledAt: new Date().toISOString()
         }
         this.recordCompile(result, run.output)
@@ -505,6 +516,10 @@ export class ResumeManager {
 
   private activeProfilePdf(): string {
     return this.paths.profilePdf(this.activeProfileId)
+  }
+
+  private activePreviewPdf(): string {
+    return this.paths.previewPdf(this.activeProfileId)
   }
 
   private activeHistoryDir(): string {

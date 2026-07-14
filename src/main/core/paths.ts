@@ -35,6 +35,10 @@ export class AppPaths {
     return join(this.resumeRoot, 'compiled', profileId, 'current.pdf')
   }
 
+  previewPdf(profileId: string): string {
+    return join(this.resumeRoot, 'previews', profileId, 'latest.pdf')
+  }
+
   historyDir(profileId: string): string {
     return join(this.resumeRoot, 'history', profileId, 'snapshots')
   }

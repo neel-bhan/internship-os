@@ -14,6 +14,7 @@ import {
   type CodexEditMode,
   type CodexEvent,
   type CodexState,
+  type CompileResult,
   type InternshipApplication,
   type ResumeChangeReview,
   type ResumeState
@@ -49,49 +50,63 @@ type DiffRow = {
 
 function PdfPreview({ revision }: { revision: string }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const pagesRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let disposed = false
-    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null
+    let renderTasks: Array<{ cancel: () => void; promise: Promise<unknown> }> = []
+    let documentProxy: { destroy: () => Promise<void> } | null = null
     let resizeObserver: ResizeObserver | null = null
     let resizeTimer: number | null = null
 
+    setError(null)
     void window.internshipOS.resume.readPdf()
       .then((data) => {
         if (!data) throw new Error('PDF file is not available')
         return pdfjs.getDocument({ data: new Uint8Array(data) }).promise
       })
-      .then(async (document) => {
-      const page = await document.getPage(1)
+      .then(async (pdfDocument) => {
+      documentProxy = pdfDocument
+      const pages = await Promise.all(
+        Array.from({ length: pdfDocument.numPages }, (_, index) => pdfDocument.getPage(index + 1))
+      )
 
       const render = (): void => {
         const container = containerRef.current
-        const canvas = canvasRef.current
-        if (disposed || !container || !canvas) return
+        const pagesElement = pagesRef.current
+        if (disposed || !container || !pagesElement) return
 
-        renderTask?.cancel()
-        const baseViewport = page.getViewport({ scale: 1 })
+        for (const task of renderTasks) task.cancel()
+        renderTasks = []
+        pagesElement.replaceChildren()
+        container.classList.toggle('multi-page', pages.length > 1)
         const availableWidth = Math.max(1, container.clientWidth - 40)
         const availableHeight = Math.max(1, container.clientHeight - 40)
-        const scale = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height)
         const pixelRatio = window.devicePixelRatio || 1
-        const viewport = page.getViewport({ scale: scale * pixelRatio })
-        const displayWidth = viewport.width / pixelRatio
-        const displayHeight = viewport.height / pixelRatio
 
-        canvas.width = Math.floor(viewport.width)
-        canvas.height = Math.floor(viewport.height)
-        canvas.style.width = `${displayWidth}px`
-        canvas.style.height = `${displayHeight}px`
+        for (const page of pages) {
+          const baseViewport = page.getViewport({ scale: 1 })
+          const widthScale = availableWidth / baseViewport.width
+          const scale = pages.length === 1
+            ? Math.min(widthScale, availableHeight / baseViewport.height)
+            : widthScale
+          const viewport = page.getViewport({ scale: scale * pixelRatio })
+          const canvas = document.createElement('canvas')
+          canvas.width = Math.floor(viewport.width)
+          canvas.height = Math.floor(viewport.height)
+          canvas.style.width = `${viewport.width / pixelRatio}px`
+          canvas.style.height = `${viewport.height / pixelRatio}px`
+          pagesElement.append(canvas)
 
-        const context = canvas.getContext('2d')
-        if (!context) return
-        renderTask = page.render({ canvas, canvasContext: context, viewport })
-        void renderTask.promise.catch((reason) => {
-          if (!disposed && reason?.name !== 'RenderingCancelledException') setError('Could not render the PDF preview.')
-        })
+          const context = canvas.getContext('2d')
+          if (!context) continue
+          const task = page.render({ canvas, canvasContext: context, viewport })
+          renderTasks.push(task)
+          void task.promise.catch((reason) => {
+            if (!disposed && reason?.name !== 'RenderingCancelledException') setError('Could not render the PDF preview.')
+          })
+        }
       }
 
       render()
@@ -109,14 +124,41 @@ function PdfPreview({ revision }: { revision: string }): React.JSX.Element {
       disposed = true
       resizeObserver?.disconnect()
       if (resizeTimer !== null) window.clearTimeout(resizeTimer)
-      renderTask?.cancel()
+      for (const task of renderTasks) task.cancel()
+      if (documentProxy) void documentProxy.destroy()
     }
   }, [revision])
 
   return (
     <div className="pdf-preview" ref={containerRef}>
-      {error ? <div className="pdf-empty">{error}</div> : <canvas ref={canvasRef} />}
+      {error ? <div className="pdf-empty">{error}</div> : <div className="pdf-pages" ref={pagesRef} />}
     </div>
+  )
+}
+
+function CompileStatus({ result }: { result: CompileResult }): React.JSX.Element {
+  if (result.ok) {
+    const pages = result.pages ?? 1
+    return <span className="compile-pill success" title={result.message}>{pages} page{pages === 1 ? '' : 's'} · ready</span>
+  }
+
+  const label = result.pages ? `${result.pages} pages · error` : 'Compile failed'
+  return (
+    <details
+      className="compile-status"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') event.currentTarget.open = false
+      }}
+    >
+      <summary className="compile-pill failure">{label}</summary>
+      <div className="compile-popover">
+        <strong>{result.message}</strong>
+        {result.errors.map((compileError) => <code key={compileError}>{compileError}</code>)}
+      </div>
+    </details>
   )
 }
 
@@ -794,12 +836,6 @@ function ResumeStudio(props: {
 
   return (
     <div className="page resume-page">
-      {resume?.lastCompile && !resume.lastCompile.ok && (
-        <div className="compile-errors">
-          <strong>{resume.lastCompile.message}</strong>
-          {resume.lastCompile.errors.map((error) => <code key={error}>{error}</code>)}
-        </div>
-      )}
       <div
         ref={gridRef}
         className={`resume-grid ${resizing ? 'resizing' : ''}`}
@@ -878,9 +914,7 @@ function ResumeStudio(props: {
             <span className="pane-title">Preview</span>
             <div className="pane-label-actions">
               {resume?.lastCompile && (
-                <span className={`compile-pill ${resume.lastCompile.ok ? 'success' : 'failure'}`} title={resume.lastCompile.message}>
-                  {resume.lastCompile.ok ? `${resume.lastCompile.pages ?? 1} page${(resume.lastCompile.pages ?? 1) === 1 ? '' : 's'} · ready` : 'Compile failed'}
-                </span>
+                <CompileStatus result={resume.lastCompile} />
               )}
               <button onClick={() => void window.internshipOS.resume.revealPdf()}>Reveal file</button>
             </div>

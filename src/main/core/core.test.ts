@@ -50,6 +50,8 @@ describe('ResumeManager', () => {
     const rejected = await manager.saveAndCompile(onePageLatex('Two pages', '\\newpage Second page'))
     expect(rejected.lastCompile?.ok).toBe(false)
     expect(rejected.lastCompile?.pages).toBe(2)
+    expect(existsSync(paths.previewPdf('general-swe'))).toBe(true)
+    expect(readFileSync(paths.previewPdf('general-swe'))).not.toEqual(lastGoodPdf)
     expect(readFileSync(paths.internalPdf)).toEqual(lastGoodPdf)
     expect(readFileSync(paths.sourceFile('general-swe'), 'utf8')).toContain('Original line')
 

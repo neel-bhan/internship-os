@@ -101,8 +101,9 @@ function registerIpc(): void {
 
   ipcMain.handle('resume:get', () => resume.getState())
   ipcMain.handle('resume:read-pdf', () => {
-    if (!existsSync(resume.paths.internalPdf)) return null
-    return Uint8Array.from(readFileSync(resume.paths.internalPdf)).buffer
+    const path = resume.getPreviewPdfPath()
+    if (!existsSync(path)) return null
+    return Uint8Array.from(readFileSync(path)).buffer
   })
   ipcMain.handle('resume:select-profile', (_event, profileId: string) => resume.selectProfile(profileId))
   ipcMain.handle('resume:save-and-compile', (_event, source: string) => resume.saveAndCompile(source))
