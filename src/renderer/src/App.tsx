@@ -493,12 +493,12 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function discardJobDraft(): Promise<void> {
-    if (!resume?.jobDraft.id) return
-    if (!confirm(`Discard the ${resume.jobDraft.name ?? 'job'} draft? The ${resume.profileName} template will not be changed.`)) return
+  async function discardJobDraft(draftId: string, draftName: string): Promise<void> {
+    if (!resume) return
+    if (!confirm(`Discard the ${draftName} draft? The ${resume.profileName} template will not be changed.`)) return
     setBusy(true)
     try {
-      const state = await window.internshipOS.resume.discardJobDraft(resume.jobDraft.id)
+      const state = await window.internshipOS.resume.discardJobDraft(draftId)
       setResume(state)
       setSource(state.source)
     } catch (error) {
@@ -623,25 +623,22 @@ export default function App(): React.JSX.Element {
                       }}
                     ><span>＋</span>New Draft…</button>
                     {resume?.jobDraft.drafts.map((draft) => (
-                      <button
-                        key={draft.id}
-                        className={draft.id === resume.jobDraft.id ? 'selected' : ''}
-                        onClick={(event) => {
-                          event.currentTarget.closest('details')?.removeAttribute('open')
-                          void selectJobDraft(draft.id)
-                        }}
-                      ><span>{draft.id === resume.jobDraft.id ? '✓' : ''}</span>{draft.name}</button>
+                      <div className="draft-option-row" key={draft.id}>
+                        <button
+                          className={`draft-option-select ${draft.id === resume.jobDraft.id ? 'selected' : ''}`}
+                          onClick={(event) => {
+                            event.currentTarget.closest('details')?.removeAttribute('open')
+                            void selectJobDraft(draft.id)
+                          }}
+                        ><span>{draft.id === resume.jobDraft.id ? '✓' : ''}</span><span>{draft.name}</span></button>
+                        <button
+                          className="draft-option-delete"
+                          aria-label={`Delete ${draft.name} draft`}
+                          title={`Delete ${draft.name} draft`}
+                          onClick={() => void discardJobDraft(draft.id, draft.name)}
+                        >×</button>
+                      </div>
                     ))}
-                    {resume?.jobDraft.active && <span className="draft-menu-separator" />}
-                    {resume?.jobDraft.active && (
-                      <button
-                        className="delete-draft-option"
-                        onClick={(event) => {
-                          event.currentTarget.closest('details')?.removeAttribute('open')
-                          void discardJobDraft()
-                        }}
-                      ><span>×</span>Delete Current Draft</button>
-                    )}
                   </div>
                 </details>
                 {resume?.jobDraft.active && <button className="stop-draft-action" onClick={() => void selectJobDraft(null)} disabled={busy}>Stop Draft</button>}
