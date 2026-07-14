@@ -34,6 +34,7 @@ button { cursor: pointer; }
 .context-actions { display: flex; align-items: center; gap: 6px; }
 .job-draft-action { max-width: 150px; overflow: hidden; border-color: rgba(0, 113, 227, .24); color: var(--blue); text-overflow: ellipsis; white-space: nowrap; }
 .job-draft-action.active { border-color: rgba(175, 126, 235, .3); color: #6941a5; background: rgba(175, 126, 235, .1); }
+.job-draft-indicator { max-width: 130px; overflow: hidden; padding: 4px 8px; border-radius: 999px; color: #6941a5; background: rgba(175, 126, 235, .11); font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; -webkit-app-region: no-drag; }
 .toolbar-drag-space { min-width: 18px; flex: 1; align-self: stretch; }
 .toolbar-title { display: flex; align-items: baseline; gap: 7px; min-width: 0; white-space: nowrap; }
 .toolbar-title strong { font-size: 13px; font-weight: 650; }
@@ -50,6 +51,15 @@ button { cursor: pointer; }
 .profile-menu-options button { width: 100%; min-height: 30px; display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 5px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; box-shadow: none; color: var(--text); text-align: left; }
 .profile-menu-options button:hover:not(:disabled) { border: 0; background: rgba(0, 113, 227, .09); }
 .profile-menu-options button.selected { color: var(--blue); font-weight: 650; }
+.draft-dialog-backdrop { position: absolute; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(25, 25, 28, .22); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); -webkit-app-region: no-drag; }
+.draft-dialog { width: min(370px, calc(100vw - 48px)); display: grid; gap: 18px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--text); background: var(--control-hover); box-shadow: 0 24px 70px rgba(0, 0, 0, .24); }
+.draft-dialog-heading { display: grid; gap: 3px; }
+.draft-dialog-heading strong { font-size: 17px; font-weight: 680; letter-spacing: -.015em; }
+.draft-dialog-heading span { color: var(--secondary); font-size: 11px; }
+.draft-dialog input { margin-top: 1px; }
+.draft-starting-point { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px; border-radius: 9px; color: var(--secondary); background: rgba(128, 128, 128, .09); font-size: 11px; }
+.draft-starting-point strong { color: var(--text); font-weight: 650; }
+.draft-dialog-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .context-actions kbd { margin-left: 3px; color: rgba(255, 255, 255, .82); font: 9px/1 -apple-system, BlinkMacSystemFont, sans-serif; }
 .page { min-height: 100%; padding: 18px 30px 34px; }
 .tracker-page { height: 100%; overflow: auto; }

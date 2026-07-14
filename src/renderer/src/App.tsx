@@ -292,6 +292,8 @@ export default function App(): React.JSX.Element {
   const [chat, setChat] = useState<ChatItem[]>([])
   const [message, setMessage] = useState('')
   const [codexBusy, setCodexBusy] = useState(false)
+  const [draftDialogOpen, setDraftDialogOpen] = useState(false)
+  const [draftName, setDraftName] = useState('')
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -319,7 +321,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
       const command = event.metaKey || event.ctrlKey
-      if (command && event.key === '1') {
+      if (event.key === 'Escape' && draftDialogOpen) {
+        event.preventDefault()
+        setDraftDialogOpen(false)
+      } else if (command && event.key === '1') {
         event.preventDefault()
         setView('resume')
         setAgentOpen(false)
@@ -343,7 +348,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [agentOpen, codexBusy, message, view, source])
+  }, [agentOpen, codexBusy, draftDialogOpen, message, view, source])
 
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
@@ -447,19 +452,25 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function createJobDraft(): Promise<void> {
+  function openJobDraftDialog(): void {
     if (!resume) return
     if (source !== resume.source && !confirm('Create the draft from the last saved template and discard unsaved editor changes?')) return
-    const replacing = resume.jobDraft.exists
-    if (replacing && !confirm(`Replace the existing ${resume.jobDraft.name ?? 'job'} draft for ${resume.profileName}?`)) return
-    const name = prompt('Company or job name for this temporary resume:', replacing ? resume.jobDraft.name ?? '' : '')?.trim()
+    setDraftName('')
+    setDraftDialogOpen(true)
+  }
+
+  async function createJobDraft(): Promise<void> {
+    if (!resume) return
+    const name = draftName.trim()
     if (!name) return
 
     setBusy(true)
     try {
-      const state = await window.internshipOS.resume.createJobDraft(name, replacing)
+      const state = await window.internshipOS.resume.createJobDraft(name)
       setResume(state)
       setSource(state.source)
+      setDraftDialogOpen(false)
+      setDraftName('')
     } catch (error) {
       showError(error)
     } finally {
@@ -486,7 +497,7 @@ export default function App(): React.JSX.Element {
     if (!resume) return
     if (resume.jobDraft.active) return setJobDraftActive(false)
     if (resume.jobDraft.exists) return setJobDraftActive(true)
-    return createJobDraft()
+    openJobDraftDialog()
   }
 
   async function discardJobDraft(): Promise<void> {
@@ -558,6 +569,7 @@ export default function App(): React.JSX.Element {
           {agentOpen ? (
             <div className="toolbar-title"><strong>Codex Agent</strong><span>Local workspace</span></div>
           ) : view === 'resume' ? (
+            <>
             <details
               className={`profile-menu ${busy || !resume ? 'disabled' : ''}`}
               onBlur={(event) => {
@@ -592,6 +604,8 @@ export default function App(): React.JSX.Element {
                 ))}
               </div>
             </details>
+            {resume?.jobDraft.active && <span className="job-draft-indicator">{resume.jobDraft.name} draft</span>}
+            </>
           ) : (
             <div className="toolbar-title"><strong>Applications</strong><span>{stats.total} total · {stats.submitted} submitted</span></div>
           )}
@@ -605,7 +619,7 @@ export default function App(): React.JSX.Element {
                   disabled={busy || !resume}
                   title={resume?.jobDraft.active ? `Return to the unchanged ${resume.profileName} template` : resume?.jobDraft.exists ? `Open the ${resume.jobDraft.name} draft` : 'Create a temporary job-specific copy'}
                 >
-                  {resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : resume?.jobDraft.exists ? `Open ${resume.jobDraft.name}` : 'Job Draft'}
+                  {resume?.jobDraft.active ? 'Back to Template' : resume?.jobDraft.exists ? `Open ${resume.jobDraft.name}` : 'New Draft'}
                 </button>
                 <button onClick={() => void resumeAction('undo')} disabled={busy}>Undo</button>
                 <button onClick={() => void window.internshipOS.resume.openPdf()} disabled={!resume?.hasPdf} title="Open current PDF">PDF</button>
@@ -613,7 +627,6 @@ export default function App(): React.JSX.Element {
                 <details className="toolbar-more">
                   <summary aria-label="More resume actions" title="More resume actions">•••</summary>
                   <div className="toolbar-menu">
-                    <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void createJobDraft() }} disabled={busy}>{resume?.jobDraft.exists ? 'Start a different job draft…' : 'New job draft…'}</button>
                     {resume?.jobDraft.exists && <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void discardJobDraft() }} disabled={busy}>Discard {resume.jobDraft.name} draft</button>}
                     <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void resumeAction('compile') }} disabled={busy}>Compile without saving</button>
                     <button onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void window.internshipOS.resume.revealPdf() }} disabled={!resume?.hasPdf}>Reveal PDF in Finder</button>
@@ -638,6 +651,42 @@ export default function App(): React.JSX.Element {
             )}
           </button>
         </div>
+        {draftDialogOpen && resume && (
+          <div
+            className="draft-dialog-backdrop"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) setDraftDialogOpen(false)
+            }}
+          >
+            <form
+              className="draft-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="draft-dialog-title"
+              onSubmit={(event) => { event.preventDefault(); void createJobDraft() }}
+            >
+              <div className="draft-dialog-heading">
+                <strong id="draft-dialog-title">New Job Draft</strong>
+                <span>Temporary resume for one application</span>
+              </div>
+              <label>
+                Company or job
+                <input
+                  autoFocus
+                  maxLength={80}
+                  value={draftName}
+                  placeholder="Amazon"
+                  onChange={(event) => setDraftName(event.target.value)}
+                />
+              </label>
+              <div className="draft-starting-point"><span>Starting from</span><strong>{resume.profileName}</strong></div>
+              <div className="draft-dialog-actions">
+                <button type="button" onClick={() => setDraftDialogOpen(false)}>Cancel</button>
+                <button className="primary" type="submit" disabled={busy || !draftName.trim()}>Create Draft</button>
+              </div>
+            </form>
+          </div>
+        )}
         <section className="primary-panel">
           {agentOpen ? (
             <AgentWorkspace
