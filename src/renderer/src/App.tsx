@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { xcodeDark, xcodeLight } from '@uiw/codemirror-theme-xcode'
 import { indentUnit, StreamLanguage } from '@codemirror/language'
@@ -1309,11 +1309,22 @@ function CodexLauncher(props: {
   onApproval: (itemId: string, requestId: string | number, decision: 'accept' | 'decline') => void
 }): React.JSX.Element {
   const { inputRef, stage, context, state, items, history, historyOpen, historyBusy, value, busy, onStageChange, onToggleHistory, onOpenChat, onNewChat, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
-  const endRef = useRef<HTMLDivElement>(null)
+  const feedRef = useRef<HTMLDivElement>(null)
+  const feedWasVisibleRef = useRef(false)
+  const followLatestRef = useRef(true)
 
-  useEffect(() => {
-    if (stage === 'conversation') endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [items, busy, stage])
+  useLayoutEffect(() => {
+    const feedVisible = stage === 'conversation' && !historyOpen
+    const justBecameVisible = feedVisible && !feedWasVisibleRef.current
+    feedWasVisibleRef.current = feedVisible
+    if (!feedVisible) return
+
+    const feed = feedRef.current
+    if (feed && (justBecameVisible || followLatestRef.current)) {
+      feed.scrollTop = feed.scrollHeight
+      followLatestRef.current = true
+    }
+  }, [items, busy, historyOpen, stage])
 
   useEffect(() => {
     if (stage !== 'hidden') window.setTimeout(() => inputRef.current?.focus(), 0)
@@ -1393,7 +1404,14 @@ function CodexLauncher(props: {
           ) : (
             <>
               <div className="codex-float-body">
-                <div className="codex-overlay-feed">
+                <div
+                  ref={feedRef}
+                  className="codex-overlay-feed"
+                  onScroll={(event) => {
+                    const feed = event.currentTarget
+                    followLatestRef.current = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48
+                  }}
+                >
                   <div className="codex-feed-inner">
                     {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
                     {items.map((item) => (
@@ -1403,7 +1421,6 @@ function CodexLauncher(props: {
                       </article>
                     ))}
                     {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
-                    <div ref={endRef} />
                   </div>
                 </div>
                 {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
