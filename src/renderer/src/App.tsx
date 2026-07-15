@@ -335,11 +335,11 @@ export default function App(): React.JSX.Element {
         setView('tracker')
       } else if ((command && event.key.toLowerCase() === 'k') || (event.altKey && event.code === 'Space')) {
         event.preventDefault()
-        setAgentStage((current) => current === 'hidden' ? 'compose' : current)
+        setAgentStage((current) => current === 'hidden' ? (chat.length > 0 ? 'conversation' : 'compose') : current)
         window.setTimeout(() => codexInputRef.current?.focus(), 0)
       } else if (event.key === 'Escape' && agentStage !== 'hidden') {
         event.preventDefault()
-        setAgentStage((current) => current === 'conversation' ? 'compose' : 'hidden')
+        setAgentStage('hidden')
       } else if (command && event.key.toLowerCase() === 's' && view === 'resume') {
         event.preventDefault()
         void resumeAction('save')
@@ -347,7 +347,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [agentStage, draftDialogOpen, view, source])
+  }, [agentStage, chat.length, draftDialogOpen, view, source])
 
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
@@ -1177,7 +1177,7 @@ function CodexLauncher(props: {
                 <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto</button>
               </div>
               <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status}><i /></button>
-              <button className="codex-collapse" aria-label="Collapse Codex" title="Return to quick prompt (Esc)" onClick={() => onStageChange('compose')}>⌄</button>
+              <button className="codex-collapse" aria-label="Hide Codex" title="Hide Codex (Esc)" onClick={() => onStageChange('hidden')}>×</button>
             </div>
           </header>
           <div className="codex-float-body">
