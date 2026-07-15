@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { dirname, join } from 'node:path'
-import type { CodexEditMode, CodexEvent, CodexState } from '../shared/types'
+import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexState } from '../shared/types'
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
@@ -27,6 +27,7 @@ export class CodexClient {
   private editMode: CodexEditMode = 'review'
   private error: string | undefined
   private eventSink: EventSink = () => undefined
+  private knownThreadIds = new Set<string>()
 
   constructor(
     private readonly projectRoot: string,
@@ -36,6 +37,8 @@ export class CodexClient {
     this.ensureCandidateProfile()
     this.editMode = this.readEditMode()
     this.threadId = this.readStoredThreadId()
+    this.knownThreadIds = new Set(this.readChatIndex())
+    if (this.threadId) this.registerThread(this.threadId)
   }
 
   setEventSink(sink: EventSink): void {
@@ -128,7 +131,11 @@ export class CodexClient {
     if (!text.trim()) return
     const state = await this.connect()
     if (!state.authenticated) throw new Error(state.error ?? 'Codex is not authenticated.')
+    const isFirstMessage = !this.threadId
     if (!this.threadId) await this.startThread()
+    if (isFirstMessage && this.threadId) {
+      await this.request('thread/name/set', { threadId: this.threadId, name: chatTitle(text) }).catch(() => undefined)
+    }
 
     const profilePath = this.getProfilePath()
     const modeInstruction = this.editMode === 'auto'
@@ -156,6 +163,44 @@ export class CodexClient {
     return join(this.paths.root, 'candidate-profile.md')
   }
 
+  async listChats(): Promise<CodexChatSummary[]> {
+    await this.requireAuthenticatedConnection()
+    const result = await this.request('thread/list', {
+      cwd: this.projectRoot,
+      archived: false,
+      limit: 100,
+      sortKey: 'updated_at',
+      sortDirection: 'desc'
+    })
+    return (Array.isArray(result?.data) ? result.data : [])
+      .filter((thread: any) => thread?.id && (thread.threadSource === 'internship_os' || this.knownThreadIds.has(String(thread.id))))
+      .map((thread: any) => {
+        const preview = extractUserRequest(String(thread.preview ?? '')).trim()
+        return {
+          id: String(thread.id),
+          title: String(thread.name ?? '').trim() || chatTitle(preview),
+          preview: preview.replace(/\s+/g, ' ').slice(0, 140),
+          updatedAt: Number(thread.updatedAt ?? thread.createdAt ?? 0)
+        }
+      })
+  }
+
+  async openChat(threadId: string): Promise<CodexConversation> {
+    await this.requireAuthenticatedConnection()
+    const result = await this.request('thread/resume', { threadId })
+    this.threadId = String(result?.thread?.id ?? threadId)
+    this.registerThread(this.threadId)
+    this.storeThreadId(this.threadId)
+    return { state: this.getState(), messages: messagesFromThread(result?.thread) }
+  }
+
+  async newChat(): Promise<CodexConversation> {
+    await this.requireAuthenticatedConnection()
+    this.threadId = null
+    this.storeThreadId(null)
+    return { state: this.getState(), messages: [] }
+  }
+
   respondToApproval(requestId: string | number, decision: 'accept' | 'decline'): void {
     this.write({ id: requestId, result: { decision } })
   }
@@ -166,6 +211,11 @@ export class CodexClient {
     this.connected = false
   }
 
+  private async requireAuthenticatedConnection(): Promise<void> {
+    const state = await this.connect()
+    if (!state.authenticated) throw new Error(state.error ?? 'Codex is not authenticated.')
+  }
+
   private async startThread(): Promise<void> {
     const result = await this.request('thread/start', {
       cwd: this.projectRoot,
@@ -173,11 +223,13 @@ export class CodexClient {
       sandbox: 'danger-full-access',
       personality: 'friendly',
       serviceName: 'internship_os',
+      threadSource: 'internship_os',
       developerInstructions:
         'Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end in one turn with no progress narration, permission questions, duplicate commands, or extra PDF rendering. Use the documented resume draft commands to list, create, select, stop, or delete job drafts when requested. Use candidate resume files, rely on resume promote for compilation and one-page validation, and never invent facts. When facts are missing, use clearly labeled TODO placeholders only when that preserves the user’s requested structure; otherwise ask one concise question in normal chat.'
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId
+    this.registerThread(threadId)
     this.storeThreadId(threadId)
   }
 
@@ -292,12 +344,64 @@ export class CodexClient {
     }
   }
 
-  private storeThreadId(threadId: string): void {
+  private storeThreadId(threadId: string | null): void {
     writeFileSync(
       join(this.paths.root, 'codex-thread.json'),
       JSON.stringify({ threadId, instructionVersion: THREAD_INSTRUCTION_VERSION })
     )
   }
+
+  private chatIndexPath(): string {
+    return join(this.paths.root, 'codex-chats.json')
+  }
+
+  private readChatIndex(): string[] {
+    try {
+      const parsed = JSON.parse(readFileSync(this.chatIndexPath(), 'utf8')) as { threadIds?: unknown }
+      return Array.isArray(parsed.threadIds) ? parsed.threadIds.filter((id): id is string => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  private registerThread(threadId: string): void {
+    if (this.knownThreadIds.has(threadId)) return
+    this.knownThreadIds.add(threadId)
+    writeFileSync(this.chatIndexPath(), JSON.stringify({ threadIds: [...this.knownThreadIds] }, null, 2))
+  }
+}
+
+function extractUserRequest(text: string): string {
+  const marker = '\n[User request]\n'
+  const index = text.lastIndexOf(marker)
+  return index >= 0 ? text.slice(index + marker.length) : text
+}
+
+function chatTitle(text: string): string {
+  const title = extractUserRequest(text).trim().split(/\r?\n/, 1)[0].replace(/\s+/g, ' ')
+  return title ? title.slice(0, 64) : 'New chat'
+}
+
+function messagesFromThread(thread: any): CodexChatMessage[] {
+  const turns = Array.isArray(thread?.turns) ? [...thread.turns] : []
+  turns.sort((left, right) => Number(left?.startedAt ?? 0) - Number(right?.startedAt ?? 0))
+  const messages: CodexChatMessage[] = []
+
+  for (const turn of turns) {
+    for (const item of Array.isArray(turn?.items) ? turn.items : []) {
+      if (item?.type === 'userMessage') {
+        const text = (Array.isArray(item.content) ? item.content : [])
+          .filter((content: any) => content?.type === 'text' && content.text)
+          .map((content: any) => String(content.text))
+          .join('\n')
+        const request = extractUserRequest(text).trim()
+        if (request) messages.push({ id: String(item.id), role: 'user', text: request })
+      } else if (item?.type === 'agentMessage' && item.text && item.phase !== 'commentary') {
+        messages.push({ id: String(item.id), role: 'assistant', text: String(item.text) })
+      }
+    }
+  }
+  return messages
 }
 
 function initialCandidateProfile(): string {

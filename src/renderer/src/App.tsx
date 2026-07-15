@@ -11,6 +11,7 @@ import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
 import {
   APPLICATION_STATUSES,
   type ApplicationInput,
+  type CodexChatSummary,
   type CodexEditMode,
   type CodexEvent,
   type CodexState,
@@ -293,6 +294,9 @@ export default function App(): React.JSX.Element {
   const [chat, setChat] = useState<ChatItem[]>([])
   const [message, setMessage] = useState('')
   const [codexBusy, setCodexBusy] = useState(false)
+  const [chatHistory, setChatHistory] = useState<CodexChatSummary[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyBusy, setHistoryBusy] = useState(false)
   const [draftDialogOpen, setDraftDialogOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [draftProfileId, setDraftProfileId] = useState('general-swe')
@@ -303,6 +307,10 @@ export default function App(): React.JSX.Element {
     document.documentElement.style.colorScheme = theme
     localStorage.setItem('internship-os-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    if (agentStage === 'hidden') setHistoryOpen(false)
+  }, [agentStage])
 
   const refresh = useCallback(async () => {
     const [nextApplications, nextResume] = await Promise.all([
@@ -316,7 +324,14 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     void refresh().catch(showError)
-    void window.internshipOS.codex.connect().then(setCodexState).catch(showError)
+    void window.internshipOS.codex.connect().then(async (state) => {
+      setCodexState(state)
+      if (state.authenticated && state.threadId) {
+        const conversation = await window.internshipOS.codex.openChat(state.threadId)
+        setCodexState(conversation.state)
+        setChat(conversation.messages)
+      }
+    }).catch(showError)
     const unsubscribe = window.internshipOS.codex.onEvent(handleCodexEvent)
     return unsubscribe
   }, [refresh])
@@ -386,6 +401,7 @@ export default function App(): React.JSX.Element {
       } else if (event.type === 'turn-completed') {
         setCodexBusy(false)
         void refresh().catch(showError)
+        void window.internshipOS.codex.getState().then(setCodexState).catch(showError)
       }
     },
     [refresh]
@@ -517,9 +533,65 @@ export default function App(): React.JSX.Element {
     setAgentStage('conversation')
     try {
       await window.internshipOS.codex.send(text)
+      setCodexState(await window.internshipOS.codex.getState())
     } catch (error) {
       setCodexBusy(false)
       showError(error)
+    }
+  }
+
+  async function toggleChatHistory(): Promise<void> {
+    if (historyOpen) {
+      setHistoryOpen(false)
+      return
+    }
+    setHistoryOpen(true)
+    setHistoryBusy(true)
+    try {
+      setChatHistory(await window.internshipOS.codex.listChats())
+    } catch (error) {
+      setHistoryOpen(false)
+      showError(error)
+    } finally {
+      setHistoryBusy(false)
+    }
+  }
+
+  async function openPreviousChat(threadId: string): Promise<void> {
+    if (codexBusy || historyBusy) return
+    if (threadId === codexState?.threadId) {
+      setHistoryOpen(false)
+      return
+    }
+    setHistoryBusy(true)
+    try {
+      const conversation = await window.internshipOS.codex.openChat(threadId)
+      setCodexState(conversation.state)
+      setChat(conversation.messages)
+      setMessage('')
+      setHistoryOpen(false)
+      setAgentStage('conversation')
+    } catch (error) {
+      showError(error)
+    } finally {
+      setHistoryBusy(false)
+    }
+  }
+
+  async function startNewChat(): Promise<void> {
+    if (codexBusy || historyBusy) return
+    setHistoryBusy(true)
+    try {
+      const conversation = await window.internshipOS.codex.newChat()
+      setCodexState(conversation.state)
+      setChat([])
+      setMessage('')
+      setHistoryOpen(false)
+      setAgentStage('compose')
+    } catch (error) {
+      showError(error)
+    } finally {
+      setHistoryBusy(false)
     }
   }
 
@@ -730,9 +802,15 @@ export default function App(): React.JSX.Element {
           context={view === 'tracker' ? 'Applications' : resume?.jobDraft.active ? `${resume.jobDraft.name} · ${resume.profileName}` : resume?.profileName ?? 'Resume'}
           state={codexState}
           items={chat}
+          history={chatHistory}
+          historyOpen={historyOpen}
+          historyBusy={historyBusy}
           value={message}
           busy={codexBusy}
           onStageChange={setAgentStage}
+          onToggleHistory={() => void toggleChatHistory()}
+          onOpenChat={(threadId) => void openPreviousChat(threadId)}
+          onNewChat={() => void startNewChat()}
           onValueChange={setMessage}
           onSend={() => void sendMessage()}
           onEditModeChange={(mode) => void changeEditMode(mode)}
@@ -1101,15 +1179,32 @@ function WorkspaceActions(props: {
   )
 }
 
+function relativeChatTime(timestamp: number): string {
+  const date = new Date(timestamp * 1000)
+  const elapsed = Date.now() - date.getTime()
+  if (!Number.isFinite(elapsed) || elapsed < 0) return ''
+  if (elapsed < 60_000) return 'Now'
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m`
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h`
+  if (elapsed < 172_800_000) return 'Yesterday'
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
 function CodexLauncher(props: {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   stage: AgentStage
   context: string
   state: CodexState | null
   items: ChatItem[]
+  history: CodexChatSummary[]
+  historyOpen: boolean
+  historyBusy: boolean
   value: string
   busy: boolean
   onStageChange: (stage: AgentStage) => void
+  onToggleHistory: () => void
+  onOpenChat: (threadId: string) => void
+  onNewChat: () => void
   onValueChange: (value: string) => void
   onSend: () => void
   onEditModeChange: (mode: CodexEditMode) => void
@@ -1117,7 +1212,7 @@ function CodexLauncher(props: {
   onReconnect: () => void
   onApproval: (itemId: string, requestId: string | number, decision: 'accept' | 'decline') => void
 }): React.JSX.Element {
-  const { inputRef, stage, context, state, items, value, busy, onStageChange, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
+  const { inputRef, stage, context, state, items, history, historyOpen, historyBusy, value, busy, onStageChange, onToggleHistory, onOpenChat, onNewChat, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -1171,6 +1266,9 @@ function CodexLauncher(props: {
               <div><strong>Codex</strong><span>{context}</span></div>
             </div>
             <div className="agent-header-actions">
+              <button className={`codex-history-button ${historyOpen ? 'active' : ''}`} aria-label="Previous chats" title="Previous chats" disabled={busy} onClick={onToggleHistory}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6M12 7.5V12l3 1.8" /></svg>
+              </button>
               <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
               <div className="edit-mode-switch compact" role="group" aria-label="Codex edit mode">
                 <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Codex proposes changes but does not apply them">Review</button>
@@ -1180,39 +1278,59 @@ function CodexLauncher(props: {
               <button className="codex-collapse" aria-label="Hide Codex" title="Hide Codex (Esc)" onClick={() => onStageChange('hidden')}>×</button>
             </div>
           </header>
-          <div className="codex-float-body">
-            <div className="codex-overlay-feed">
-              <div className="codex-feed-inner">
-                {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
-                {items.map((item) => (
-                  <article key={item.id} className={`agent-message ${item.role}`}>
-                    <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
-                    <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
-                  </article>
+          {historyOpen ? (
+            <div className="codex-history">
+              <div className="codex-history-heading"><div><strong>Recent chats</strong><span>Only Internship OS conversations</span></div><button className="primary" disabled={busy || historyBusy} onClick={onNewChat}>＋ New</button></div>
+              <div className="codex-history-list">
+                {historyBusy && history.length === 0 ? (
+                  <div className="codex-history-empty"><div className="thinking"><span /><span /><span /></div></div>
+                ) : history.length === 0 ? (
+                  <div className="codex-history-empty">No previous chats yet.</div>
+                ) : history.map((chat) => (
+                  <button key={chat.id} className={chat.id === state?.threadId ? 'active' : ''} onClick={() => onOpenChat(chat.id)} disabled={busy || historyBusy}>
+                    <span className="codex-history-copy"><strong>{chat.title}</strong><span>{chat.preview}</span></span>
+                    <span className="codex-history-meta">{relativeChatTime(chat.updatedAt)}{chat.id === state?.threadId ? ' · Open' : ''}</span>
+                  </button>
                 ))}
-                {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
-                <div ref={endRef} />
               </div>
             </div>
-            {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
-          </div>
-          <footer className="codex-float-composer">
-            <textarea
-              ref={inputRef}
-              rows={2}
-              value={value}
-              placeholder="Ask Codex…"
-              aria-label="Message Codex"
-              onChange={(event) => onValueChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  send()
-                }
-              }}
-            />
-            <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
-          </footer>
+          ) : (
+            <>
+              <div className="codex-float-body">
+                <div className="codex-overlay-feed">
+                  <div className="codex-feed-inner">
+                    {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
+                    {items.map((item) => (
+                      <article key={item.id} className={`agent-message ${item.role}`}>
+                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
+                        <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
+                      </article>
+                    ))}
+                    {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
+                    <div ref={endRef} />
+                  </div>
+                </div>
+                {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
+              </div>
+              <footer className="codex-float-composer">
+                <textarea
+                  ref={inputRef}
+                  rows={2}
+                  value={value}
+                  placeholder="Ask Codex…"
+                  aria-label="Message Codex"
+                  onChange={(event) => onValueChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      send()
+                    }
+                  }}
+                />
+                <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
+              </footer>
+            </>
+          )}
         </section>
       )}
     </div>

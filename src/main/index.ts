@@ -145,6 +145,9 @@ function registerIpc(): void {
     const error = await shell.openPath(codex.getProfilePath())
     if (error) throw new Error(error)
   })
+  ipcMain.handle('codex:list-chats', () => codex.listChats())
+  ipcMain.handle('codex:open-chat', (_event, threadId: string) => codex.openChat(threadId))
+  ipcMain.handle('codex:new-chat', () => codex.newChat())
   ipcMain.handle('codex:send', (_event, text: string) => codex.send(text))
   ipcMain.handle(
     'codex:respond-approval',

@@ -26,6 +26,9 @@ const api: InternshipOsApi = {
     connect: () => ipcRenderer.invoke('codex:connect'),
     setEditMode: (mode: CodexEditMode) => ipcRenderer.invoke('codex:set-edit-mode', mode),
     openProfile: () => ipcRenderer.invoke('codex:open-profile'),
+    listChats: () => ipcRenderer.invoke('codex:list-chats'),
+    openChat: (threadId: string) => ipcRenderer.invoke('codex:open-chat', threadId),
+    newChat: () => ipcRenderer.invoke('codex:new-chat'),
     send: (text: string) => ipcRenderer.invoke('codex:send', text),
     respondToApproval: (requestId, decision) => ipcRenderer.invoke('codex:respond-approval', requestId, decision),
     onEvent: (callback: (event: CodexEvent) => void) => {

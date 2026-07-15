@@ -112,6 +112,24 @@ export interface CodexState {
   error?: string
 }
 
+export interface CodexChatSummary {
+  id: string
+  title: string
+  preview: string
+  updatedAt: number
+}
+
+export interface CodexChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+}
+
+export interface CodexConversation {
+  state: CodexState
+  messages: CodexChatMessage[]
+}
+
 export interface InternshipOsApi {
   applications: {
     list(): Promise<InternshipApplication[]>
@@ -137,6 +155,9 @@ export interface InternshipOsApi {
     connect(): Promise<CodexState>
     setEditMode(mode: CodexEditMode): Promise<CodexState>
     openProfile(): Promise<void>
+    listChats(): Promise<CodexChatSummary[]>
+    openChat(threadId: string): Promise<CodexConversation>
+    newChat(): Promise<CodexConversation>
     send(text: string): Promise<void>
     respondToApproval(requestId: string | number, decision: 'accept' | 'decline'): Promise<void>
     onEvent(callback: (event: CodexEvent) => void): () => void

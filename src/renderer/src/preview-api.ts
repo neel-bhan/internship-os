@@ -107,6 +107,9 @@ export function installBrowserPreviewApi(): void {
       connect: async () => codex,
       setEditMode: async (editMode) => (codex = { ...codex, editMode }),
       openProfile: async () => undefined,
+      listChats: async () => [],
+      openChat: async (threadId: string) => ({ state: (codex = { ...codex, threadId }), messages: [] }),
+      newChat: async () => ({ state: (codex = { ...codex, threadId: null }), messages: [] }),
       send: async () => undefined,
       respondToApproval: async () => undefined,
       onEvent: () => () => undefined
