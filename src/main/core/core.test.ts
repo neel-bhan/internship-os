@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { ApplicationStore } from './database'
 import { AppPaths } from './paths'
 import { ResumeManager } from './resume'
+import { SettingsStore } from './settings'
+import { writeAssistantWorkspace } from './instructions'
 
 const temporaryRoots: string[] = []
 
@@ -151,6 +153,48 @@ describe('ResumeManager', () => {
     expect(state.jobDraft.drafts).toHaveLength(1)
     expect(existsSync(paths.jobDraftSourceFile('general-swe', state.jobDraft.id!))).toBe(true)
     expect(existsSync(join(legacyDraftRoot, 'source', 'main.tex'))).toBe(false)
+  })
+})
+
+describe('first-run setup', () => {
+  it('persists generic settings and creates provider instructions without personal defaults', () => {
+    const root = temporaryRoot()
+    const settings = new SettingsStore(root)
+    expect(settings.get().onboardingComplete).toBe(false)
+
+    const saved = settings.complete({
+      identity: { fullName: 'Test Candidate', email: 'test@example.com', phone: '', portfolio: '', github: '', linkedin: '' },
+      exportFilename: '',
+      resumeProfiles: [{ id: 'quant', name: 'Quant', focus: 'Algorithms and data' }],
+      assistantProvider: 'claude',
+      editMode: 'review'
+    })
+    expect(saved).toMatchObject({ onboardingComplete: true, exportFilename: 'Test_Candidate_Resume.pdf', assistantProvider: 'claude' })
+
+    const workspace = join(root, 'assistant-workspace')
+    const wrapper = writeAssistantWorkspace(workspace, saved.resumeProfiles, {
+      electronPath: '/Applications/Internship OS.app/Contents/MacOS/Internship OS',
+      cliPath: '/app/cli.js',
+      appRoot: root,
+      downloadsRoot: join(root, 'downloads'),
+      defaultResumePath: '/app/main.tex'
+    })
+    expect(existsSync(wrapper)).toBe(true)
+    expect(readFileSync(join(workspace, 'AGENTS.md'), 'utf8')).toContain('`quant` — Quant')
+    expect(readFileSync(join(workspace, 'CLAUDE.md'), 'utf8')).toContain('Never invent experience')
+    expect(readFileSync(join(workspace, 'AGENTS.md'), 'utf8')).not.toContain('Neel')
+  })
+
+  it('supports custom profile IDs without requiring general-swe', () => {
+    const root = temporaryRoot()
+    const defaultSource = join(root, 'default.tex')
+    writeFileSync(defaultSource, onePageLatex('Custom template'))
+    const manager = new ResumeManager(
+      new AppPaths(join(root, 'data'), join(root, 'downloads')),
+      defaultSource,
+      [{ id: 'research', name: 'Research', focus: 'Research engineering' }]
+    )
+    expect(manager.getState()).toMatchObject({ activeProfileId: 'research', profileName: 'Research' })
   })
 })
 

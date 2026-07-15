@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ApplicationInput, CodexEditMode, CodexEvent, InternshipOsApi } from '../shared/types'
 
 const api: InternshipOsApi = {
+  onboarding: {
+    getState: () => ipcRenderer.invoke('onboarding:get-state'),
+    refreshTools: () => ipcRenderer.invoke('onboarding:refresh-tools'),
+    chooseResumeFile: () => ipcRenderer.invoke('onboarding:choose-resume-file'),
+    openAssistantSetup: (provider) => ipcRenderer.invoke('onboarding:open-assistant-setup', provider),
+    complete: (input) => ipcRenderer.invoke('onboarding:complete', input)
+  },
   applications: {
     list: () => ipcRenderer.invoke('applications:list'),
     save: (input: ApplicationInput) => ipcRenderer.invoke('applications:save', input),

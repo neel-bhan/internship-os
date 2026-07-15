@@ -11,7 +11,7 @@ export class AppPaths {
   readonly publicPdf: string
   readonly archivesDir: string
 
-  constructor(root?: string, downloadsDir?: string) {
+  constructor(root?: string, downloadsDir?: string, exportFilename = 'Candidate_Resume.pdf') {
     this.root = root ?? process.env.INTERNSHIP_OS_HOME ?? join(homedir(), 'Library', 'Application Support', 'Internship OS')
     const downloads = downloadsDir ?? process.env.INTERNSHIP_OS_DOWNLOADS ?? join(homedir(), 'Downloads')
     this.database = join(this.root, 'internship-os.sqlite3')
@@ -19,7 +19,7 @@ export class AppPaths {
     this.profilesDir = join(this.resumeRoot, 'profiles')
     this.activeProfileFile = join(this.resumeRoot, 'active-profile.json')
     this.internalPdf = join(this.resumeRoot, 'active', 'current.pdf')
-    this.publicPdf = join(downloads, 'Neel_Bhansali_Resume.pdf')
+    this.publicPdf = join(downloads, exportFilename)
     this.archivesDir = join(this.root, 'archives')
   }
 

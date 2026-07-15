@@ -36,13 +36,61 @@ export interface ResumeProfile {
   focus: string
 }
 
-export const RESUME_PROFILES: ResumeProfile[] = [
+export const DEFAULT_RESUME_PROFILES: ResumeProfile[] = [
   { id: 'general-swe', name: 'General SWE', focus: 'Balanced software engineering' },
   { id: 'backend', name: 'Backend', focus: 'APIs, systems, data, and cloud' },
   { id: 'full-stack', name: 'Full Stack', focus: 'End-to-end frontend and backend work' },
   { id: 'ai-ml', name: 'AI / ML', focus: 'Machine learning and AI systems' },
   { id: 'quant', name: 'Quant', focus: 'Python, data, algorithms, and reliability' }
 ]
+
+// Kept as a compatibility alias for the browser preview and existing imports.
+export const RESUME_PROFILES = DEFAULT_RESUME_PROFILES
+
+export type AssistantProviderId = 'codex' | 'claude' | 'none'
+
+export interface CandidateIdentity {
+  fullName: string
+  email: string
+  phone: string
+  portfolio: string
+  github: string
+  linkedin: string
+}
+
+export interface UserSettings {
+  version: number
+  onboardingComplete: boolean
+  identity: CandidateIdentity
+  exportFilename: string
+  resumeProfiles: ResumeProfile[]
+  assistantProvider: AssistantProviderId
+  editMode: CodexEditMode
+}
+
+export interface ToolCheck {
+  id: 'codex' | 'claude' | 'latex'
+  available: boolean
+  executable: string | null
+  version: string | null
+  authenticated?: boolean
+  message: string
+}
+
+export interface OnboardingState {
+  settings: UserSettings
+  tools: ToolCheck[]
+  legacyDataDetected: boolean
+}
+
+export interface OnboardingInput {
+  identity: CandidateIdentity
+  exportFilename: string
+  resumeProfiles: ResumeProfile[]
+  assistantProvider: AssistantProviderId
+  editMode: CodexEditMode
+  resumeSource?: string
+}
 
 export interface ResumeState {
   source: string
@@ -103,6 +151,8 @@ export type CodexEvent =
 export type CodexEditMode = 'review' | 'auto'
 
 export interface CodexState {
+  provider: AssistantProviderId
+  providerName: string
   available: boolean
   connected: boolean
   authenticated: boolean
@@ -131,6 +181,13 @@ export interface CodexConversation {
 }
 
 export interface InternshipOsApi {
+  onboarding: {
+    getState(): Promise<OnboardingState>
+    refreshTools(): Promise<ToolCheck[]>
+    chooseResumeFile(): Promise<{ name: string; source: string } | null>
+    openAssistantSetup(provider: Exclude<AssistantProviderId, 'none'>): Promise<void>
+    complete(input: OnboardingInput): Promise<OnboardingState>
+  }
   applications: {
     list(): Promise<InternshipApplication[]>
     save(input: ApplicationInput): Promise<InternshipApplication[]>

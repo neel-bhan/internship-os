@@ -10,13 +10,19 @@ import * as pdfjs from 'pdfjs-dist'
 import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
 import {
   APPLICATION_STATUSES,
+  DEFAULT_RESUME_PROFILES,
   type ApplicationInput,
+  type AssistantProviderId,
+  type CandidateIdentity,
   type CodexChatSummary,
   type CodexEditMode,
   type CodexEvent,
   type CodexState,
   type CompileResult,
   type InternshipApplication,
+  type OnboardingInput,
+  type OnboardingState,
+  type ResumeProfile,
   type ResumeChangeReview,
   type ResumeState
 } from '../../shared/types'
@@ -29,7 +35,7 @@ type AgentStage = 'hidden' | 'compose' | 'conversation'
 const initialTheme: Theme = (() => {
   const stored = localStorage.getItem('internship-os-theme')
   if (stored === 'light' || stored === 'dark') return stored
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  return 'dark'
 })()
 
 document.documentElement.dataset.theme = initialTheme
@@ -282,6 +288,135 @@ function leadingColumns(line: string): number {
 }
 
 export default function App(): React.JSX.Element {
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.internshipOS.onboarding.getState().then(setOnboarding).catch((reason) => setError(errorText(reason)))
+  }, [])
+
+  if (error) return <div className="startup-state"><strong>Internship OS could not start</strong><span>{error}</span></div>
+  if (!onboarding) return <div className="startup-state"><strong>Internship OS</strong><span>Opening…</span></div>
+  if (!onboarding.settings.onboardingComplete) {
+    return <Onboarding initial={onboarding} onComplete={setOnboarding} />
+  }
+  return <MainApp />
+}
+
+function Onboarding({ initial, onComplete }: { initial: OnboardingState; onComplete: (state: OnboardingState) => void }): React.JSX.Element {
+  const [step, setStep] = useState(0)
+  const [tools, setTools] = useState(initial.tools)
+  const [identity, setIdentity] = useState<CandidateIdentity>(initial.settings.identity)
+  const [profiles, setProfiles] = useState<ResumeProfile[]>(initial.settings.resumeProfiles)
+  const [provider, setProvider] = useState<AssistantProviderId>(initial.settings.assistantProvider)
+  const [editMode, setEditMode] = useState<CodexEditMode>(initial.settings.editMode)
+  const [resumeSource, setResumeSource] = useState<string | undefined>()
+  const [resumeFile, setResumeFile] = useState<string | null>(null)
+  const [customName, setCustomName] = useState('')
+  const [customFocus, setCustomFocus] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pages = ['Welcome', 'About you', 'Resumes', 'Assistant', 'Ready']
+
+  function toggleProfile(profile: ResumeProfile): void {
+    setProfiles((current) => current.some((item) => item.id === profile.id)
+      ? current.filter((item) => item.id !== profile.id)
+      : [...current, profile])
+  }
+
+  function addCustomProfile(): void {
+    const name = customName.trim()
+    if (!name) return
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    if (!id || profiles.some((profile) => profile.id === id)) {
+      setError('That resume format already exists.')
+      return
+    }
+    setProfiles((current) => [...current, { id, name, focus: customFocus.trim() || `${name} roles` }])
+    setCustomName('')
+    setCustomFocus('')
+    setError(null)
+  }
+
+  function removeProfile(profileId: string): void {
+    setProfiles((current) => current.filter((profile) => profile.id !== profileId))
+  }
+
+  async function chooseResume(): Promise<void> {
+    const result = await window.internshipOS.onboarding.chooseResumeFile()
+    if (!result) return
+    setResumeFile(result.name)
+    setResumeSource(result.source)
+  }
+
+  async function refreshTools(): Promise<void> {
+    setBusy(true)
+    try { setTools(await window.internshipOS.onboarding.refreshTools()) } finally { setBusy(false) }
+  }
+
+  async function openAssistantSetup(): Promise<void> {
+    if (provider === 'none') return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.internshipOS.onboarding.openAssistantSetup(provider)
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function finish(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      const input: OnboardingInput = {
+        identity,
+        exportFilename: `${identity.fullName || 'Candidate'}_Resume.pdf`,
+        resumeProfiles: profiles,
+        assistantProvider: provider,
+        editMode,
+        resumeSource
+      }
+      onComplete(await window.internshipOS.onboarding.complete(input))
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const canContinue = step === 1 ? Boolean(identity.fullName.trim()) : step === 2 ? profiles.length > 0 : true
+  const selectedTool = tools.find((tool) => tool.id === provider)
+
+  return (
+    <main className="onboarding-shell">
+      <aside className="onboarding-sidebar">
+        <div className="onboarding-brand"><strong>Internship OS</strong><span>Internship workspace</span></div>
+        <ol>{pages.map((page, index) => <li key={page} className={index === step ? 'active' : index < step ? 'done' : ''}><i>{index < step ? '✓' : index + 1}</i>{page}</li>)}</ol>
+        <span>Local-first. Your data stays on this Mac.</span>
+      </aside>
+      <section className="onboarding-content">
+        <div className="onboarding-page">
+          {step === 0 && <div className="welcome-step"><p className="eyebrow">WELCOME</p><h1>Your internship workspace,<br />set up around you.</h1><p>Track applications, manage tailored resume profiles, and work with Codex or Claude without giving up local control.</p><div className="welcome-features"><span>✓ Local application tracker</span><span>✓ Safe resume versions</span><span>✓ Optional AI assistant</span></div></div>}
+          {step === 1 && <><p className="eyebrow">ABOUT YOU</p><h1>Let’s personalize your workspace.</h1><p className="onboarding-lead">Only your name is required. These details prefill a starter resume and your private candidate profile.</p><div className="identity-grid"><label className="wide">Full name *<input autoFocus value={identity.fullName} onChange={(event) => setIdentity({ ...identity, fullName: event.target.value })} /></label><label>Email<input type="email" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label><label>Phone<input value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value })} /></label><label>Portfolio<input placeholder="yourname.dev" value={identity.portfolio} onChange={(event) => setIdentity({ ...identity, portfolio: event.target.value })} /></label><label>GitHub<input placeholder="github.com/username" value={identity.github} onChange={(event) => setIdentity({ ...identity, github: event.target.value })} /></label><label className="wide">LinkedIn<input placeholder="linkedin.com/in/username" value={identity.linkedin} onChange={(event) => setIdentity({ ...identity, linkedin: event.target.value })} /></label></div></>}
+          {step === 2 && <><p className="eyebrow">RESUME FORMATS</p><h1>Which resumes do you want to keep?</h1><p className="onboarding-lead">Each format gets independent source, PDF, drafts, history, and undo. Choose common formats or add your own.</p><div className="profile-grid">{DEFAULT_RESUME_PROFILES.map((profile) => { const selected = profiles.some((item) => item.id === profile.id); return <button type="button" key={profile.id} className={`profile-choice ${selected ? 'selected' : ''}`} onClick={() => toggleProfile(profile)}><i>{selected ? '✓' : '+'}</i><strong>{profile.name}</strong><span>{profile.focus}</span></button> })}</div><div className="custom-profile"><input placeholder="Format name, e.g. Security" value={customName} onChange={(event) => setCustomName(event.target.value)} /><input placeholder="Focus, e.g. security engineering roles" value={customFocus} onChange={(event) => setCustomFocus(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addCustomProfile() }} /><button onClick={addCustomProfile} disabled={!customName.trim()}>Add format</button></div><div className="selected-profiles"><div className="selected-profiles-heading"><strong>Formats you’ll keep</strong><span>{profiles.length} selected</span></div>{profiles.length === 0 ? <p>Select or add at least one format.</p> : profiles.map((profile) => <div className="selected-profile-row" key={profile.id}><span><strong>{profile.name}</strong><small>{profile.focus}</small></span><button type="button" onClick={() => removeProfile(profile.id)}>Remove</button></div>)}</div><button className="import-resume" onClick={() => void chooseResume()}>{resumeFile ? `✓ ${resumeFile}` : 'Import existing .tex resume…'}</button></>}
+          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS uses the provider already installed and signed in on your Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.available ? 'Setup needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}<div className="mode-choice"><div><strong>Review first</strong><span>Assistant proposes changes without modifying managed data.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Assistant may make and verify requested local edits.</span></div></div></>}
+          {step === 4 && <><div className="ready-mark">✓</div><p className="eyebrow">READY</p><h1>Your workspace is ready.</h1><p className="onboarding-lead">{profiles.length} resume profile{profiles.length === 1 ? '' : 's'} · {provider === 'none' ? 'No assistant' : provider === 'codex' ? 'Codex' : 'Claude'} · {editMode === 'review' ? 'Review first' : 'Auto apply'}</p><div className="ready-summary"><span><strong>Resume</strong>{resumeFile ? `Imported from ${resumeFile}` : 'New starter template'}</span><span><strong>PDF export</strong>{(identity.fullName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf</span><span><strong>Storage</strong>Local application data</span></div></>}
+          {error && <div className="onboarding-error">{error}</div>}
+        </div>
+        <footer className="onboarding-actions">{step > 0 ? <button className="ghost" disabled={busy} onClick={() => setStep((current) => current - 1)}>Back</button> : <span />}{step < 4 ? <button className="primary" disabled={!canContinue || busy} onClick={() => setStep((current) => current + 1)}>{step === 0 ? 'Get started' : 'Continue'}</button> : <button className="primary" disabled={busy} onClick={() => void finish()}>{busy ? 'Creating workspace…' : 'Open Internship OS'}</button>}</footer>
+      </section>
+    </main>
+  )
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function MainApp(): React.JSX.Element {
   const [view, setView] = useState<View>('resume')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [agentStage, setAgentStage] = useState<AgentStage>('hidden')
@@ -874,7 +1009,7 @@ function Tracker(props: {
           <thead><tr><th>Company</th><th>Position</th><th>Date Applied</th><th>Application Status</th><th>Details</th><th /></tr></thead>
           <tbody>
             {applications.length === 0 ? (
-              <tr><td colSpan={6} className="empty">No applications yet. Add one manually or ask Codex.</td></tr>
+              <tr><td colSpan={6} className="empty">No applications yet. Add one manually or ask your assistant.</td></tr>
             ) : applications.map((application) => (
               <tr key={application.id} onDoubleClick={() => onEdit(application)}>
                 <td><strong>{application.company}</strong></td>
@@ -1332,6 +1467,9 @@ function CodexLauncher(props: {
 
   const mode = state?.editMode ?? 'review'
   const status = !state?.authenticated ? 'Offline' : busy ? 'Working' : 'Ready'
+  const providerName = state?.providerName ?? 'Assistant'
+
+  if (state?.provider === 'none') return <></>
 
   function send(): void {
     if (!value.trim() || busy || !state?.authenticated) return
@@ -1342,15 +1480,15 @@ function CodexLauncher(props: {
   return (
     <div className={`codex-layer ${stage}`}>
       {stage === 'compose' && (
-        <section className="codex-quick" aria-label="Codex quick prompt">
+        <section className="codex-quick" aria-label={`${providerName} quick prompt`}>
           <span className="agent-mark"><Icon name="codex" /></span>
           <span className="codex-quick-context" title={context}>{context}</span>
           <textarea
             ref={inputRef}
             rows={1}
             value={value}
-            placeholder="Ask Codex…"
-            aria-label="Message Codex"
+            placeholder={`Ask ${providerName}…`}
+            aria-label={`Message ${providerName}`}
             onChange={(event) => onValueChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -1372,29 +1510,29 @@ function CodexLauncher(props: {
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6M12 7.5V12l3 1.8" /></svg>
           </button>
-          <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status} onClick={() => onStageChange('conversation')}><i /></button>
-          <button className="codex-quick-close" aria-label="Hide Codex" title="Hide Codex (Esc)" onClick={() => onStageChange('hidden')}>×</button>
+          <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`${providerName} is ${status}`} title={status} onClick={() => onStageChange('conversation')}><i /></button>
+          <button className="codex-quick-close" aria-label={`Hide ${providerName}`} title={`Hide ${providerName} (Esc)`} onClick={() => onStageChange('hidden')}>×</button>
           <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
         </section>
       )}
       {stage === 'conversation' && (
-        <section className="codex-float" aria-label="Codex conversation">
+        <section className="codex-float" aria-label={`${providerName} conversation`}>
           <header className="codex-overlay-header">
             <div className="agent-identity">
               <span className="agent-mark"><Icon name="codex" /></span>
-              <div><strong>Codex</strong><span>{context}</span></div>
+              <div><strong>{providerName}</strong><span>{context}</span></div>
             </div>
             <div className="agent-header-actions">
               <button className={`codex-history-button ${historyOpen ? 'active' : ''}`} aria-label="Previous chats" title="Previous chats" disabled={busy} onClick={onToggleHistory}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6M12 7.5V12l3 1.8" /></svg>
               </button>
               <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
-              <div className="edit-mode-switch compact" role="group" aria-label="Codex edit mode">
-                <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Codex proposes changes but does not apply them">Review</button>
-                <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto</button>
+              <div className="edit-mode-switch compact" role="group" aria-label={`${providerName} edit mode`}>
+                <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title={`${providerName} proposes changes but does not apply them`}>Review</button>
+                <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title={`${providerName} applies requested changes and compiles automatically`}>Auto</button>
               </div>
-              <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status}><i /></button>
-              <button className="codex-collapse" aria-label="Hide Codex" title="Hide Codex (Esc)" onClick={() => onStageChange('hidden')}>×</button>
+              <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`${providerName} is ${status}`} title={status}><i /></button>
+              <button className="codex-collapse" aria-label={`Hide ${providerName}`} title={`Hide ${providerName} (Esc)`} onClick={() => onStageChange('hidden')}>×</button>
             </div>
           </header>
           {historyOpen ? (
@@ -1425,25 +1563,25 @@ function CodexLauncher(props: {
                   }}
                 >
                   <div className="codex-feed-inner">
-                    {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
+                    {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask {providerName} to tailor this resume or manage an application.</p></div>}
                     {items.map((item) => (
                       <article key={item.id} className={`agent-message ${item.role}`}>
-                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
+                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : 'Activity'}</div>
                         <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
                       </article>
                     ))}
                     {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
                   </div>
                 </div>
-                {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
+                {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? `${providerName} login is required.`}</p><button onClick={onReconnect}>Reconnect</button></div>}
               </div>
               <footer className="codex-float-composer">
                 <textarea
                   ref={inputRef}
                   rows={2}
                   value={value}
-                  placeholder="Ask Codex…"
-                  aria-label="Message Codex"
+                  placeholder={`Ask ${providerName}…`}
+                  aria-label={`Message ${providerName}`}
                   onChange={(event) => onValueChange(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !event.shiftKey) {

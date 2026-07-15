@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexState } from '../shared/types'
 import { AppPaths } from './core/paths'
 
@@ -31,11 +31,11 @@ export class CodexClient {
 
   constructor(
     private readonly projectRoot: string,
-    private readonly paths: AppPaths
+    private readonly paths: AppPaths,
+    initialEditMode: CodexEditMode = 'review'
   ) {
     mkdirSync(this.paths.root, { recursive: true })
-    this.ensureCandidateProfile()
-    this.editMode = this.readEditMode()
+    this.editMode = this.readEditMode(initialEditMode)
     this.threadId = this.readStoredThreadId()
     this.knownThreadIds = new Set(this.readChatIndex())
     if (this.threadId) this.registerThread(this.threadId)
@@ -47,6 +47,8 @@ export class CodexClient {
 
   getState(): CodexState {
     return {
+      provider: 'codex',
+      providerName: 'Codex',
       available: Boolean(this.findCodex()),
       connected: this.connected,
       authenticated: this.authenticated,
@@ -102,7 +104,7 @@ export class CodexClient {
 
     try {
       await this.request('initialize', {
-        clientInfo: { name: 'internship_os', title: 'Internship OS', version: '0.1.0' }
+        clientInfo: { name: 'internship_os', title: 'Internship OS', version: '1.0.0' }
       })
       this.notify('initialized', {})
       this.connected = true
@@ -147,8 +149,8 @@ export class CodexClient {
       threadId: this.threadId,
       input: [{ type: 'text', text: requestText }],
       cwd: this.projectRoot,
-      approvalPolicy: 'never',
-      sandboxPolicy: { type: 'dangerFullAccess' }
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.paths.root], networkAccess: false }
     })
   }
 
@@ -219,13 +221,13 @@ export class CodexClient {
   private async startThread(): Promise<void> {
     const result = await this.request('thread/start', {
       cwd: this.projectRoot,
-      approvalPolicy: 'never',
-      sandbox: 'danger-full-access',
+      approvalPolicy: 'on-request',
+      sandbox: 'workspace-write',
       personality: 'friendly',
       serviceName: 'internship_os',
       threadSource: 'internship_os',
       developerInstructions:
-        'Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end in one turn with no progress narration, permission questions, duplicate commands, or extra PDF rendering. Use the documented resume draft commands to list, create, select, stop, or delete job drafts when requested. Use candidate resume files, rely on resume promote for compilation and one-page validation, and never invent facts. When facts are missing, use clearly labeled TODO placeholders only when that preserves the user’s requested structure; otherwise ask one concise question in normal chat.'
+        'Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end, use the bundled command surface, honor approval boundaries, rely on resume promotion for compilation and one-page validation, and never invent candidate facts.'
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId
@@ -273,7 +275,8 @@ export class CodexClient {
     }
 
     if (message.id != null && message.method?.endsWith('requestApproval')) {
-      this.write({ id: message.id, result: { decision: 'accept' } })
+      const summary = String(message.params?.reason ?? message.params?.command ?? message.params?.method ?? 'Assistant action requires approval.')
+      this.eventSink({ type: 'approval', requestId: message.id, method: message.method, summary })
       return
     }
 
@@ -311,7 +314,8 @@ export class CodexClient {
       process.env.CODEX_PATH,
       '/Applications/Codex.app/Contents/Resources/codex',
       '/opt/homebrew/bin/codex',
-      '/usr/local/bin/codex'
+      '/usr/local/bin/codex',
+      ...String(process.env.PATH ?? '').split(delimiter).filter(Boolean).map((directory) => join(directory, 'codex'))
     ].filter(Boolean) as string[]
     return candidates.find(existsSync) ?? null
   }
@@ -320,18 +324,13 @@ export class CodexClient {
     return join(this.paths.root, 'codex-settings.json')
   }
 
-  private readEditMode(): CodexEditMode {
+  private readEditMode(fallback: CodexEditMode): CodexEditMode {
     try {
       const parsed = JSON.parse(readFileSync(this.settingsPath(), 'utf8')) as { editMode?: CodexEditMode }
       return parsed.editMode === 'auto' ? 'auto' : 'review'
     } catch {
-      return 'review'
+      return fallback
     }
-  }
-
-  private ensureCandidateProfile(): void {
-    const path = this.getProfilePath()
-    if (!existsSync(path)) writeFileSync(path, initialCandidateProfile())
   }
 
   private readStoredThreadId(): string | null {
@@ -402,90 +401,4 @@ function messagesFromThread(thread: any): CodexChatMessage[] {
     }
   }
   return messages
-}
-
-function initialCandidateProfile(): string {
-  return `# Neel Bhansali — Durable Candidate Profile
-
-This local file is the source of verified candidate facts shared across Internship OS chats. Add only facts Neel explicitly supplies or facts already present in a verified resume. Never infer claims from job descriptions or AI suggestions.
-
-## Goal and constraints
-
-- Primary workflow: optimize applications for software engineering internships.
-- Resume must remain readable and exactly one page.
-- Never invent experience, metrics, dates, skills, credentials, employers, projects, or claims.
-- Ask before changing resume spacing, margins, font size, section count, bullet count, or rendered line count.
-
-## Identity and links
-
-- Name: Neel Bhansali
-- Portfolio: https://neelbhansali.com
-- GitHub: https://github.com/neel-bhan
-- LinkedIn: https://www.linkedin.com/in/neel-bhansali-506a42265/
-- Email: neelbh99@gmail.com
-- Phone: 817-659-4024
-
-## Education
-
-- University of Wisconsin–Madison, Madison, Wisconsin
-- Bachelor of Science in Computer Science and Data Science
-- GPA: 3.73
-- Expected graduation: 2028
-
-## Experience
-
-### DraftKings — Software Engineer Intern
-- Boston, MA · June 2026–August 2026
-- Built a .NET service for a server-driven UI platform to validate, version, and serve dynamic CMS templates.
-- Developed a drag-and-drop Template Builder that converts visual layouts into schema-valid JSON, validates templates upfront, persists version history, and feeds the live rendering pipeline.
-- Implemented a Claude-powered agentic workflow to generate validated CMS templates from prompts.
-
-### Represented Collective — Software Engineer Intern
-- Madison, WI · September 2025–Present
-- Developed a HIPAA-compliant mobile health application for asthma patients using React Native and Expo.
-- Engineered an Express.js, Prisma, and PostgreSQL backend, containerized with Docker and deployed on AWS ECS/RDS, with JWT access control, audit logging, and strict validation pipelines.
-- Implemented symptom tracking, medication adherence logging, and analytics dashboards.
-
-### Mini Orange — Software Engineer Intern
-- Dallas, TX · June 2025–August 2025
-- Designed features for a secure web-based Active Directory management platform covering user, group, and OU administration, audit logging, and MFA-enabled self-service password resets.
-- Created a React frontend with dynamic forms, organizational management modules, and configurable CAPTCHA.
-- Built fault-tolerant .NET REST APIs with advanced error handling and monitoring pipelines.
-
-### University of Texas at Dallas — Research Assistant
-- Richardson, TX · May 2022–July 2022
-- Worked with neural networks, CNNs, LSTMs, SVMs, reinforcement learning, and decision trees.
-- Developed a machine-learning face recognition system for university security infrastructure.
-- Performed data cleaning, feature engineering, and hyperparameter tuning with PyTorch.
-
-## Projects and leadership
-
-### College Resale Platform
-- May 2025–August 2025
-- University-exclusive textbook and sports-ticket marketplace with school-email verification, geolocation search, and scraped campus sporting events.
-- Stack includes React, TypeScript, Vite, Tailwind CSS, Node.js, Express.js, PostgreSQL, JWT, REST APIs, AWS S3/RDS/ECS/Fargate/VPC, and WebSockets.
-- Includes real-time bidding chat and notifications.
-
-### Agentic Portfolio Updater
-- August 2025–Present
-- Agentic AI pipeline that detects GitHub repositories through webhooks, generates summaries with the OpenAI API, and submits pull requests to a Next.js/React portfolio.
-- Uses structured JSON/YAML project schemas, automated stack detection and tagging, README image parsing, AWS SQS/Lambda/S3, GitHub Actions, rollback support, and PR validation.
-
-### AIFA (AI FOR ALL)
-- September 2022–Present
-- Developed AI educational modules and facilitated workshops.
-- Organized hackathons with 200+ students, $2,000+ in prizes, and sponsors including Google, GitHub, and Keurig.
-
-## Verified skills
-
-- Languages: Java, Python, JavaScript, TypeScript, C#, SQL
-- Cloud: AWS Lambda, S3, ECS, RDS, VPC, Fargate
-- Frameworks and libraries: React, React Native, Expo, Node.js, Express, Tailwind CSS, PyTorch, Pandas, NumPy, Prisma
-- Data and infrastructure: PostgreSQL, MongoDB, Docker, Git, GitHub Actions, REST APIs, WebSockets, JWT
-- AI tooling: OpenAI API, Claude-powered agentic workflows
-
-## Durable preferences and new verified facts
-
-- Add future facts, corrections, target-role preferences, and constraints here with the date learned.
-`
 }

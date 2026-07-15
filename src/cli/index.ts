@@ -3,15 +3,19 @@ import { resolve } from 'node:path'
 import { ApplicationStore } from '../main/core/database'
 import { AppPaths } from '../main/core/paths'
 import { ResumeManager } from '../main/core/resume'
+import { SettingsStore } from '../main/core/settings'
 import type { ApplicationInput, ApplicationStatus } from '../shared/types'
 
 const args = process.argv.slice(2)
 const [area, action] = args
 const flags = parseFlags(args.slice(2))
-const paths = new AppPaths()
+const root = new AppPaths().root
+const settings = new SettingsStore(root).get()
+if (!settings.onboardingComplete) throw new Error('Complete Internship OS onboarding before using the command line.')
+const paths = new AppPaths(root, undefined, settings.exportFilename)
 const defaultSource = findDefaultSource()
 const store = new ApplicationStore(paths.database)
-const resume = new ResumeManager(paths, defaultSource)
+const resume = new ResumeManager(paths, defaultSource, settings.resumeProfiles)
 resume.initialize()
 
 try {
@@ -111,7 +115,7 @@ function requireFlag(values: Record<string, string>, name: string): string {
 }
 
 function findDefaultSource(): string {
-  const candidates = [resolve('main.tex'), resolve(process.env.INIT_CWD ?? '', 'main.tex')]
+  const candidates = [process.env.INTERNSHIP_OS_DEFAULT_RESUME, resolve('main.tex'), resolve(process.env.INIT_CWD ?? '', 'main.tex')].filter(Boolean) as string[]
   return candidates.find(existsSync) ?? candidates[0]
 }
 
@@ -131,7 +135,7 @@ function usage(): never {
   npm run ios -- application update --id ID [fields]
   npm run ios -- application delete --id ID
   npm run ios -- resume state|profiles|prepare|compile|undo|archive
-  npm run ios -- resume select --profile general-swe|backend|full-stack|ai-ml|quant
+  npm run ios -- resume select --profile PROFILE_ID
   npm run ios -- resume draft-list [--profile PROFILE]
   npm run ios -- resume draft-create --name NAME [--profile PROFILE]
   npm run ios -- resume draft-select --name NAME|--id ID [--profile PROFILE]

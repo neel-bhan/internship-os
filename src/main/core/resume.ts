@@ -15,7 +15,7 @@ import { basename, dirname, join, relative } from 'node:path'
 import { spawn } from 'node:child_process'
 import { PDFDocument } from 'pdf-lib'
 import {
-  RESUME_PROFILES,
+  DEFAULT_RESUME_PROFILES,
   type ApplicationInput,
   type CompileResult,
   type ResumeChangeReview,
@@ -40,14 +40,18 @@ interface DiffOperation {
 }
 
 export class ResumeManager {
-  private activeProfileId = RESUME_PROFILES[0].id
+  private activeProfileId: string
   private activeJobDraftIds = new Map<string, string>()
   private initialized = false
 
   constructor(
     readonly paths: AppPaths,
-    private readonly defaultSourcePath: string
-  ) {}
+    private readonly defaultSourcePath: string,
+    private readonly profiles: ResumeProfile[] = DEFAULT_RESUME_PROFILES
+  ) {
+    if (profiles.length === 0) throw new Error('At least one resume profile is required.')
+    this.activeProfileId = profiles[0].id
+  }
 
   initialize(): void {
     if (this.initialized) return
@@ -57,19 +61,20 @@ export class ResumeManager {
     mkdirSync(dirname(this.paths.publicPdf), { recursive: true })
     mkdirSync(this.paths.archivesDir, { recursive: true })
 
-    const generalSource = this.paths.sourceFile('general-swe')
-    mkdirSync(this.paths.profileDir('general-swe'), { recursive: true })
-    if (!existsSync(generalSource)) {
+    const baseProfile = this.profiles[0]
+    const baseSource = this.paths.sourceFile(baseProfile.id)
+    mkdirSync(this.paths.profileDir(baseProfile.id), { recursive: true })
+    if (!existsSync(baseSource)) {
       if (!existsSync(this.defaultSourcePath)) {
         throw new Error(`Default resume source not found: ${this.defaultSourcePath}`)
       }
-      cpSync(this.defaultSourcePath, generalSource)
+      cpSync(this.defaultSourcePath, baseSource)
     }
 
-    for (const profile of RESUME_PROFILES) {
+    for (const profile of this.profiles) {
       const profileDir = this.paths.profileDir(profile.id)
-      if (!existsSync(profileDir)) cpSync(this.paths.profileDir('general-swe'), profileDir, { recursive: true })
-      if (!existsSync(this.paths.sourceFile(profile.id))) cpSync(generalSource, this.paths.sourceFile(profile.id))
+      if (!existsSync(profileDir)) cpSync(this.paths.profileDir(baseProfile.id), profileDir, { recursive: true })
+      if (!existsSync(this.paths.sourceFile(profile.id))) cpSync(baseSource, this.paths.sourceFile(profile.id))
       mkdirSync(this.paths.historyDir(profile.id), { recursive: true })
       mkdirSync(this.paths.compileHistoryDir(profile.id), { recursive: true })
       mkdirSync(this.paths.candidatesDir(profile.id), { recursive: true })
@@ -106,7 +111,7 @@ export class ResumeManager {
       hasPdf,
       activeProfileId: profile.id,
       profileName: profile.name,
-      profiles: RESUME_PROFILES.map((item) => ({ ...item })),
+      profiles: this.profiles.map((item) => ({ ...item })),
       jobDraft: {
         exists: drafts.length > 0,
         active: Boolean(activeDraft),
@@ -120,7 +125,7 @@ export class ResumeManager {
   }
 
   listProfiles(): ResumeProfile[] {
-    return RESUME_PROFILES.map((profile) => ({ ...profile }))
+    return this.profiles.map((profile) => ({ ...profile }))
   }
 
   getPreviewPdfPath(): string {
@@ -131,7 +136,7 @@ export class ResumeManager {
 
   selectProfile(profileId: string): ResumeState {
     this.initialize()
-    const profile = RESUME_PROFILES.find((item) => item.id === profileId)
+    const profile = this.profiles.find((item) => item.id === profileId)
     if (!profile) throw new Error(`Unknown resume profile: ${profileId}`)
     this.activeProfileId = profile.id
     this.writeActiveProfileId()
@@ -144,7 +149,7 @@ export class ResumeManager {
     const trimmedName = name.trim()
     if (!trimmedName) throw new Error('Enter a company or job name for this draft.')
     if (trimmedName.length > 80) throw new Error('Job draft names must be 80 characters or fewer.')
-    if (!RESUME_PROFILES.some((profile) => profile.id === profileId)) throw new Error(`Unknown resume profile: ${profileId}`)
+    if (!this.profiles.some((profile) => profile.id === profileId)) throw new Error(`Unknown resume profile: ${profileId}`)
 
     this.activeProfileId = profileId
 
@@ -530,6 +535,7 @@ export class ResumeManager {
   }
 
   private migrateLegacyGeneralProfile(): void {
+    if (!this.profiles.some((profile) => profile.id === 'general-swe')) return
     const generalPdf = this.paths.profilePdf('general-swe')
     if (existsSync(this.paths.internalPdf) && !existsSync(generalPdf)) this.atomicCopy(this.paths.internalPdf, generalPdf)
 
@@ -579,14 +585,14 @@ export class ResumeManager {
   }
 
   private readActiveProfileId(): string {
-    if (!existsSync(this.paths.activeProfileFile)) return RESUME_PROFILES[0].id
+    if (!existsSync(this.paths.activeProfileFile)) return this.profiles[0].id
     try {
       const parsed = JSON.parse(readFileSync(this.paths.activeProfileFile, 'utf8')) as { activeProfileId?: string }
-      if (RESUME_PROFILES.some((profile) => profile.id === parsed.activeProfileId)) return parsed.activeProfileId!
+      if (this.profiles.some((profile) => profile.id === parsed.activeProfileId)) return parsed.activeProfileId!
     } catch {
-      // A missing or malformed preference safely falls back to General SWE.
+      // A missing or malformed preference safely falls back to the first configured profile.
     }
-    return RESUME_PROFILES[0].id
+    return this.profiles[0].id
   }
 
   private readActiveJobDraftIds(): Map<string, string> {
@@ -597,7 +603,7 @@ export class ResumeManager {
         activeJobDraftIds?: Record<string, string>
         activeJobDraftProfiles?: string[]
       }
-      for (const profile of RESUME_PROFILES) {
+      for (const profile of this.profiles) {
         const drafts = this.listJobDrafts(profile.id)
         const requestedId = parsed.activeJobDraftIds?.[profile.id]
         if (requestedId && drafts.some((draft) => draft.id === requestedId)) active.set(profile.id, requestedId)
@@ -628,7 +634,7 @@ export class ResumeManager {
   }
 
   private activeProfile(): ResumeProfile {
-    return RESUME_PROFILES.find((profile) => profile.id === this.activeProfileId) ?? RESUME_PROFILES[0]
+    return this.profiles.find((profile) => profile.id === this.activeProfileId) ?? this.profiles[0]
   }
 
   private activeProfileDir(): string {

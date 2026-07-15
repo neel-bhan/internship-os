@@ -14,7 +14,7 @@ export function installBrowserPreviewApi(): void {
   let resume: ResumeState = {
     source: resumeSource,
     sourcePath: '~/Library/Application Support/Internship OS/resumes/profiles/general-swe/main.tex',
-    pdfPath: '~/Downloads/Neel_Bhansali_Resume.pdf',
+    pdfPath: '~/Downloads/Preview_User_Resume.pdf',
     pdfRevision: null,
     hasPdf: false,
     activeProfileId: 'general-swe',
@@ -30,9 +30,28 @@ export function installBrowserPreviewApi(): void {
       changedAt: new Date().toISOString()
     }
   }
-  let codex: CodexState = { available: true, connected: false, authenticated: false, accountLabel: 'Preview', threadId: null, editMode: 'review' }
+  let codex: CodexState = { provider: 'codex', providerName: 'Codex', available: true, connected: false, authenticated: false, accountLabel: 'Preview', threadId: null, editMode: 'review' }
 
   window.internshipOS = {
+    onboarding: {
+      getState: async () => ({
+        settings: {
+          version: 1,
+          onboardingComplete: true,
+          identity: { fullName: 'Preview User', email: '', phone: '', portfolio: '', github: '', linkedin: '' },
+          exportFilename: 'Preview_User_Resume.pdf',
+          resumeProfiles: RESUME_PROFILES,
+          assistantProvider: 'codex',
+          editMode: 'review'
+        },
+        tools: [],
+        legacyDataDetected: false
+      }),
+      refreshTools: async () => [],
+      chooseResumeFile: async () => null,
+      openAssistantSetup: async () => undefined,
+      complete: async (input) => ({ settings: { version: 1, onboardingComplete: true, ...input }, tools: [], legacyDataDetected: false })
+    },
     applications: {
       list: async () => applications,
       save: async (input: ApplicationInput) => {

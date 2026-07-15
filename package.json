@@ -1,12 +1,14 @@
 {
   "name": "internship-application-os",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "author": "Internship OS",
   "private": true,
   "description": "Local-first SWE internship tracker and LaTeX resume workspace",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:fresh": "root=$(mktemp -d /tmp/internship-os-fresh.XXXXXX); INTERNSHIP_OS_HOME=\"$root/data\" INTERNSHIP_OS_DOWNLOADS=\"$root/downloads\" electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "package:mac": "npm run build && electron-builder --mac dir --publish never",
     "preview": "electron-vite preview",
@@ -44,7 +46,7 @@
     "vitest": "^3.2.4"
   },
   "build": {
-    "appId": "com.neelbhansali.internshipos",
+    "appId": "com.internshipos.desktop",
     "productName": "Internship OS",
     "files": [
       "out/**/*",

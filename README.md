@@ -1,6 +1,6 @@
 # Internship OS
 
-A minimal local desktop app for SWE internship applications, LaTeX resume editing, and exact submission archives.
+Local-first macOS workspace for internship applications, LaTeX resume profiles, job-specific drafts, and optional Codex or Claude assistance.
 
 ## Run
 
@@ -9,23 +9,16 @@ npm install
 npm run dev
 ```
 
-The app uses the locally installed Codex CLI. Sign in once if needed:
+Use `npm run dev:fresh` for a disposable first-run workspace. Normal `npm run dev` keeps your usual local data.
 
-```bash
-codex login
-```
+Onboarding collects a candidate name and optional links, creates the selected resume profiles, imports an optional `.tex` resume, checks LaTeX and assistant tools, and generates private `AGENTS.md` / `CLAUDE.md` instructions in the local app-data workspace.
 
-Keyboard shortcuts: `⌘1` Resume, `⌘2` Tracker, `⌘K` Codex, `⌘S` save and compile, `⌘Enter` send to Codex, and `Esc` close Codex.
-
-Tracker data, resume sources, compile history, and archives are stored under the app's local Electron data directory. The upload-ready PDF is written to:
-
-```text
-~/Downloads/Neel_Bhansali_Resume.pdf
-```
-
-## Checks
+## Verify and package
 
 ```bash
 npm test
 npm run build
+npm run package:mac
 ```
+
+The app stores personal data under macOS Application Support and exports the active PDF to Downloads. No personal resume content ships in the repository or packaged app.
