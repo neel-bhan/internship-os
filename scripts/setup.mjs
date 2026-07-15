@@ -106,7 +106,11 @@ function ensureStarterPackages() {
     { file: 'fullpage.sty', package: 'preprint' },
     { file: 'enumitem.sty', package: 'enumitem' },
     { file: 'titlesec.sty', package: 'titlesec' },
-    { file: 'hyperref.sty', package: 'hyperref' }
+    { file: 'hyperref.sty', package: 'hyperref' },
+    { file: 'marvosym.sty', package: 'marvosym' },
+    { file: 'fancyhdr.sty', package: 'fancyhdr' },
+    { file: 'babel.sty', package: 'babel' },
+    { file: 'english.ldf', package: 'babel-english' }
   ]
   const missing = packages.filter(({ file }) => spawn(kpsewhich, [file]).status !== 0)
   if (missing.length === 0) return

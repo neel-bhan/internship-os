@@ -341,7 +341,7 @@ export class ResumeManager {
     if (latexmk) {
       const args = ['-pdf', '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', `-outdir=${buildDir}`, 'main.tex']
       let output = await this.runProcess(latexmk, args, sourceDir)
-      for (let attempt = 0; output.code !== 0 && attempt < 3; attempt += 1) {
+      for (let attempt = 0; output.code !== 0 && attempt < 8; attempt += 1) {
         const installed = await this.installMissingLocalPackages(output.text, dirname(latexmk), sourceDir)
         if (!installed) break
         output = await this.runProcess(latexmk, args, sourceDir)
@@ -375,10 +375,7 @@ export class ResumeManager {
     const tlmgr = join(compilerDirectory, 'tlmgr')
     if (!compilerDirectory.includes(`${join('.tools', 'tinytex')}`) || !existsSync(tlmgr)) return false
 
-    const missingFiles = [...output.matchAll(/File\s+[`']([^`']+\.(?:sty|cls))[`']\s+not found/gi)]
-      .map((match) => match[1])
-      .filter((file, index, files) => files.indexOf(file) === index)
-      .slice(0, 5)
+    const missingFiles = detectRequiredTexFiles(output)
     if (missingFiles.length === 0) return false
 
     let installed = false
@@ -417,7 +414,7 @@ export class ResumeManager {
   private parseCompilerErrors(output: string): string[] {
     const lines = output.split(/\r?\n/)
     const useful = lines.filter((line) =>
-      /(^! |\.tex:\d+:|LaTeX Error:|not found|Emergency stop|Fatal error|Overfull \\hbox)/i.test(line)
+      /(^! |\.tex:\d+:|(?:LaTeX|Package\s+\S+) Error:|not found|Emergency stop|Fatal error|Overfull \\hbox)/i.test(line)
     )
     return [...new Set(useful.map((line) => line.trim()).filter(Boolean))].slice(0, 10).length
       ? [...new Set(useful.map((line) => line.trim()).filter(Boolean))].slice(0, 10)
@@ -778,6 +775,14 @@ export class ResumeManager {
     cpSync(source, temporary)
     renameSync(temporary, destination)
   }
+}
+
+export function detectRequiredTexFiles(output: string): string[] {
+  const missingFiles = [...output.matchAll(/File\s+[`']([^`']+\.(?:sty|cls|def|ldf|fd))[`']\s+not found/gi)]
+    .map((match) => match[1])
+  const babelLanguages = [...output.matchAll(/Package\s+babel\s+Error:\s+Unknown option\s+[`']([^`']+)[`']/gi)]
+    .map((match) => `${match[1]}.ldf`)
+  return [...new Set([...missingFiles, ...babelLanguages])].slice(0, 10)
 }
 
 function processEnv(compilerDirectory?: string): NodeJS.ProcessEnv {

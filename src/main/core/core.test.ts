@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ApplicationStore } from './database'
 import { AppPaths } from './paths'
-import { ResumeManager } from './resume'
+import { detectRequiredTexFiles, ResumeManager } from './resume'
 import { SettingsStore } from './settings'
 import { writeAssistantWorkspace } from './instructions'
 import { createCandidateProfile, updateCandidateProfile } from './templates'
@@ -35,6 +35,13 @@ describe('ApplicationStore', () => {
 })
 
 describe('ResumeManager', () => {
+  it('detects missing packages and Babel language modules', () => {
+    expect(detectRequiredTexFiles(`
+      LaTeX Error: File \`fancyhdr.sty' not found.
+      Package babel Error: Unknown option 'english'.
+    `)).toEqual(['fancyhdr.sty', 'english.ldf'])
+  })
+
   it('promotes only a successful one-page PDF and archives exact source', async () => {
     const root = temporaryRoot()
     const downloads = join(root, 'downloads')
