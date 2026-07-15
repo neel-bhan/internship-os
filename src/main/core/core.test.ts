@@ -177,7 +177,13 @@ describe('first-run setup', () => {
       assistantProvider: 'claude',
       editMode: 'review'
     })
-    expect(saved).toMatchObject({ onboardingComplete: true, exportFilename: 'Test_Candidate_Resume.pdf', assistantProvider: 'claude' })
+    expect(saved).toMatchObject({
+      onboardingComplete: true,
+      exportFilename: 'Test_Candidate_Resume.pdf',
+      assistantProvider: 'claude',
+      codexModel: 'gpt-5.6-luna',
+      codexReasoningEffort: 'low'
+    })
 
     const workspace = join(root, 'assistant-workspace')
     const wrapper = writeAssistantWorkspace(workspace, saved.resumeProfiles, {

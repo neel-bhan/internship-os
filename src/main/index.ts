@@ -99,7 +99,10 @@ function initializeRuntime(seedSource?: string): void {
   store = new ApplicationStore(paths.database)
   resume = new ResumeManager(paths, defaultSource, settings.resumeProfiles)
   resume.initialize()
-  assistant = createAssistantClient(settings.assistantProvider, workspaceRoot, paths, cliWrapperPath, settings.editMode)
+  assistant = createAssistantClient(settings.assistantProvider, workspaceRoot, paths, cliWrapperPath, settings.editMode, {
+    model: settings.codexModel,
+    reasoningEffort: settings.codexReasoningEffort
+  })
   assistant.setEventSink((event) => {
     const window = mainWindow
     if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return

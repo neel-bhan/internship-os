@@ -19,7 +19,9 @@ export function installBrowserPreviewApi(): void {
     exportFilename: 'Preview_User_Resume.pdf',
     resumeProfiles: RESUME_PROFILES,
     assistantProvider: 'codex',
-    editMode: 'review'
+    editMode: 'review',
+    codexModel: 'gpt-5.6-luna',
+    codexReasoningEffort: 'low'
   }
   let resume: ResumeState = {
     source: resumeSource,
@@ -40,7 +42,7 @@ export function installBrowserPreviewApi(): void {
       changedAt: new Date().toISOString()
     }
   }
-  let codex: CodexState = { provider: 'codex', providerName: 'Codex', available: true, connected: false, authenticated: false, accountLabel: 'Preview', threadId: null, editMode: 'review' }
+  let codex: CodexState = { provider: 'codex', providerName: 'Codex', available: true, connected: false, authenticated: false, accountLabel: 'Preview', threadId: null, editMode: 'review', model: previewSettings.codexModel, reasoningEffort: previewSettings.codexReasoningEffort }
 
   window.internshipOS = {
     onboarding: {
@@ -52,7 +54,7 @@ export function installBrowserPreviewApi(): void {
       refreshTools: async () => [],
       chooseResumeFile: async () => null,
       openAssistantSetup: async () => undefined,
-      complete: async (input) => ({ settings: { version: 1, onboardingComplete: true, ...input }, tools: [], legacyDataDetected: false })
+      complete: async (input) => ({ settings: { version: 1, onboardingComplete: true, ...input, codexModel: input.codexModel ?? 'gpt-5.6-luna', codexReasoningEffort: input.codexReasoningEffort ?? 'low' }, tools: [], legacyDataDetected: false })
     },
     settings: {
       get: async () => ({
@@ -61,7 +63,7 @@ export function installBrowserPreviewApi(): void {
         legacyDataDetected: false
       }),
       save: async (input) => {
-        previewSettings = { version: 1, onboardingComplete: true, ...input }
+        previewSettings = { version: 1, onboardingComplete: true, ...input, codexModel: input.codexModel ?? 'gpt-5.6-luna', codexReasoningEffort: input.codexReasoningEffort ?? 'low' }
         for (const profile of input.resumeProfiles) if (!profileSources.has(profile.id)) profileSources.set(profile.id, resume.source)
         const activeProfile = input.resumeProfiles.find((profile) => profile.id === resume.activeProfileId) ?? input.resumeProfiles[0]
         resume = {
@@ -71,7 +73,7 @@ export function installBrowserPreviewApi(): void {
           profileName: activeProfile.name,
           profiles: input.resumeProfiles
         }
-        codex = { ...codex, provider: input.assistantProvider, providerName: input.assistantProvider === 'claude' ? 'Claude' : input.assistantProvider === 'codex' ? 'Codex' : 'No assistant', editMode: input.editMode }
+        codex = { ...codex, provider: input.assistantProvider, providerName: input.assistantProvider === 'claude' ? 'Claude' : input.assistantProvider === 'codex' ? 'Codex' : 'No assistant', editMode: input.editMode, model: previewSettings.codexModel, reasoningEffort: previewSettings.codexReasoningEffort }
         return { settings: previewSettings, tools: [], legacyDataDetected: false }
       },
       refreshTools: async () => [],

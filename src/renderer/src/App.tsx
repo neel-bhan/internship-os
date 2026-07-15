@@ -10,6 +10,7 @@ import * as pdfjs from 'pdfjs-dist'
 import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
 import {
   APPLICATION_STATUSES,
+  CODEX_MODEL_OPTIONS,
   DEFAULT_RESUME_PROFILES,
   type ApplicationInput,
   type AssistantProviderId,
@@ -17,6 +18,7 @@ import {
   type CodexChatSummary,
   type CodexEditMode,
   type CodexEvent,
+  type CodexReasoningEffort,
   type CodexState,
   type CompileResult,
   type InternshipApplication,
@@ -312,6 +314,8 @@ function Onboarding({ initial, onComplete }: { initial: OnboardingState; onCompl
   const [profiles, setProfiles] = useState<ResumeProfile[]>(initial.settings.resumeProfiles)
   const [provider, setProvider] = useState<AssistantProviderId>(initial.settings.assistantProvider)
   const [editMode, setEditMode] = useState<CodexEditMode>(initial.settings.editMode)
+  const [codexModel, setCodexModel] = useState(initial.settings.codexModel)
+  const [codexReasoningEffort, setCodexReasoningEffort] = useState<CodexReasoningEffort>(initial.settings.codexReasoningEffort)
   const [resumeSource, setResumeSource] = useState<string | undefined>()
   const [resumeFile, setResumeFile] = useState<string | null>(null)
   const [customName, setCustomName] = useState('')
@@ -379,6 +383,8 @@ function Onboarding({ initial, onComplete }: { initial: OnboardingState; onCompl
         resumeProfiles: profiles,
         assistantProvider: provider,
         editMode,
+        codexModel,
+        codexReasoningEffort,
         resumeSource
       }
       onComplete(await window.internshipOS.onboarding.complete(input))
@@ -404,7 +410,7 @@ function Onboarding({ initial, onComplete }: { initial: OnboardingState; onCompl
           {step === 0 && <div className="welcome-step"><p className="eyebrow">WELCOME</p><h1>Your internship workspace,<br />set up around you.</h1><p>Track applications, manage tailored resume profiles, and work with Codex or Claude without giving up local control.</p><div className="welcome-features"><span>✓ Local application tracker</span><span>✓ Safe resume versions</span><span>✓ Optional AI assistant</span></div></div>}
           {step === 1 && <><p className="eyebrow">ABOUT YOU</p><h1>Let’s personalize your workspace.</h1><p className="onboarding-lead">Only your name is required. These details prefill a starter resume and your private candidate profile.</p><div className="identity-grid"><label className="wide">Full name *<input autoFocus value={identity.fullName} onChange={(event) => setIdentity({ ...identity, fullName: event.target.value })} /></label><label>Email<input type="email" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label><label>Phone<input value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value })} /></label><label>Portfolio<input placeholder="yourname.dev" value={identity.portfolio} onChange={(event) => setIdentity({ ...identity, portfolio: event.target.value })} /></label><label>GitHub<input placeholder="github.com/username" value={identity.github} onChange={(event) => setIdentity({ ...identity, github: event.target.value })} /></label><label className="wide">LinkedIn<input placeholder="linkedin.com/in/username" value={identity.linkedin} onChange={(event) => setIdentity({ ...identity, linkedin: event.target.value })} /></label></div></>}
           {step === 2 && <><p className="eyebrow">RESUME FORMATS</p><h1>Which resumes do you want to keep?</h1><p className="onboarding-lead">Each format gets independent source, PDF, drafts, history, and undo. Choose common formats or add your own.</p><div className="profile-grid">{DEFAULT_RESUME_PROFILES.map((profile) => { const selected = profiles.some((item) => item.id === profile.id); return <button type="button" key={profile.id} className={`profile-choice ${selected ? 'selected' : ''}`} onClick={() => toggleProfile(profile)}><i>{selected ? '✓' : '+'}</i><strong>{profile.name}</strong><span>{profile.focus}</span></button> })}</div><div className="custom-profile"><input placeholder="Format name, e.g. Security" value={customName} onChange={(event) => setCustomName(event.target.value)} /><input placeholder="Focus, e.g. security engineering roles" value={customFocus} onChange={(event) => setCustomFocus(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addCustomProfile() }} /><button onClick={addCustomProfile} disabled={!customName.trim()}>Add format</button></div><div className="selected-profiles"><div className="selected-profiles-heading"><strong>Formats you’ll keep</strong><span>{profiles.length} selected</span></div>{profiles.length === 0 ? <p>Select or add at least one format.</p> : profiles.map((profile) => <div className="selected-profile-row" key={profile.id}><span><strong>{profile.name}</strong><small>{profile.focus}</small></span><button type="button" onClick={() => removeProfile(profile.id)}>Remove</button></div>)}</div><button className="import-resume" onClick={() => void chooseResume()}>{resumeFile ? `✓ ${resumeFile}` : 'Import existing .tex resume…'}</button></>}
-          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS uses the provider already installed and signed in on your Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.available ? 'Setup needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}<div className="mode-choice"><div><strong>Review first</strong><span>Assistant proposes changes without modifying managed data.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Assistant may make and verify requested local edits.</span></div></div></>}
+          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS uses the provider already installed and signed in on your Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.available ? 'Setup needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}{provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}<div className="mode-choice"><div><strong>Review first</strong><span>Assistant proposes changes without modifying managed data.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Assistant may make and verify requested local edits.</span></div></div></>}
           {step === 4 && <><div className="ready-mark">✓</div><p className="eyebrow">READY</p><h1>Your workspace is ready.</h1><p className="onboarding-lead">{profiles.length} resume profile{profiles.length === 1 ? '' : 's'} · {provider === 'none' ? 'No assistant' : provider === 'codex' ? 'Codex' : 'Claude'} · {editMode === 'review' ? 'Review first' : 'Auto apply'}</p><div className="ready-summary"><span><strong>Resume</strong>{resumeFile ? `Imported from ${resumeFile}` : 'New starter template'}</span><span><strong>PDF export</strong>{(identity.fullName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf</span><span><strong>Storage</strong>Local application data</span></div></>}
           {error && <div className="onboarding-error">{error}</div>}
         </div>
@@ -416,6 +422,16 @@ function Onboarding({ initial, onComplete }: { initial: OnboardingState; onCompl
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function CodexPerformanceSettings({ model, effort, onModelChange, onEffortChange }: { model: string; effort: CodexReasoningEffort; onModelChange: (model: string) => void; onEffortChange: (effort: CodexReasoningEffort) => void }): React.JSX.Element {
+  return (
+    <div className="codex-performance-settings">
+      <label>Model<select value={model} onChange={(event) => onModelChange(event.target.value)}>{!CODEX_MODEL_OPTIONS.some((option) => option.id === model) && <option value={model}>{model}</option>}{CODEX_MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.name} · {option.id}</option>)}</select></label>
+      <label>Reasoning<select value={effort} onChange={(event) => onEffortChange(event.target.value as CodexReasoningEffort)}><option value="low">Low · fastest</option><option value="medium">Medium</option><option value="high">High · slowest</option></select></label>
+      <span>{CODEX_MODEL_OPTIONS.find((option) => option.id === model)?.description ?? 'Custom Codex model'}.</span>
+    </div>
+  )
 }
 
 function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: OnboardingState; onSettingsChanged: (state: OnboardingState) => void }): React.JSX.Element {
@@ -1023,6 +1039,8 @@ function SettingsDialog({ initial, onClose, onSaved }: { initial: OnboardingStat
   const [profiles, setProfiles] = useState<ResumeProfile[]>(initial.settings.resumeProfiles)
   const [provider, setProvider] = useState<AssistantProviderId>(initial.settings.assistantProvider)
   const [editMode, setEditMode] = useState<CodexEditMode>(initial.settings.editMode)
+  const [codexModel, setCodexModel] = useState(initial.settings.codexModel)
+  const [codexReasoningEffort, setCodexReasoningEffort] = useState<CodexReasoningEffort>(initial.settings.codexReasoningEffort)
   const [tools, setTools] = useState<ToolCheck[]>(initial.tools)
   const [customName, setCustomName] = useState('')
   const [customFocus, setCustomFocus] = useState('')
@@ -1094,7 +1112,7 @@ function SettingsDialog({ initial, onClose, onSaved }: { initial: OnboardingStat
     setBusy(true)
     setError(null)
     try {
-      const input: SettingsInput = { identity, exportFilename, resumeProfiles: profiles, assistantProvider: provider, editMode }
+      const input: SettingsInput = { identity, exportFilename, resumeProfiles: profiles, assistantProvider: provider, editMode, codexModel, codexReasoningEffort }
       onSaved(await window.internshipOS.settings.save(input))
     } catch (reason) {
       setError(errorText(reason))
@@ -1160,6 +1178,7 @@ function SettingsDialog({ initial, onClose, onSaved }: { initial: OnboardingStat
               })}
             </div>
             {provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="settings-setup-row"><span>{selectedTool.message}</span><button type="button" onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button type="button" onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}
+            {provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}
             <div className="settings-mode">
               <button type="button" className={editMode === 'review' ? 'selected' : ''} onClick={() => setEditMode('review')}><strong>Review first</strong><span>Propose changes without editing managed data.</span></button>
               <button type="button" className={editMode === 'auto' ? 'selected' : ''} onClick={() => setEditMode('auto')}><strong>Auto apply</strong><span>Make and verify requested local edits.</span></button>
@@ -1723,7 +1742,7 @@ function CodexLauncher(props: {
           <header className="codex-overlay-header">
             <div className="agent-identity">
               <span className="agent-mark"><Icon name="codex" /></span>
-              <div><strong>{providerName}</strong><span>{context}</span></div>
+              <div><strong>{providerName}</strong><span>{context}{state?.model ? ` · ${state.model} · ${state.reasoningEffort}` : ''}</span></div>
             </div>
             <div className="agent-header-actions">
               <button className={`codex-history-button ${historyOpen ? 'active' : ''}`} aria-label="Previous chats" title="Previous chats" disabled={busy} onClick={onToggleHistory}>

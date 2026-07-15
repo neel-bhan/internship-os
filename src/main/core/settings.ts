@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   DEFAULT_RESUME_PROFILES,
   type CandidateIdentity,
+  type CodexReasoningEffort,
   type OnboardingInput,
   type ResumeProfile,
   type UserSettings
@@ -57,7 +58,9 @@ export class SettingsStore {
       exportFilename: sanitizeExportFilename(input.exportFilename, fullName),
       resumeProfiles: profiles,
       assistantProvider: input.assistantProvider,
-      editMode: input.editMode
+      editMode: input.editMode,
+      codexModel: input.codexModel?.trim() || 'gpt-5.6-luna',
+      codexReasoningEffort: normalizeReasoningEffort(input.codexReasoningEffort)
     }
     this.write(this.settings)
     return this.get()
@@ -77,7 +80,9 @@ export class SettingsStore {
         ...defaultSettings(),
         ...parsed,
         identity: { ...emptyIdentity, ...parsed.identity },
-        exportFilename: sanitizeExportFilename(parsed.exportFilename, parsed.identity?.fullName || 'Candidate')
+        exportFilename: sanitizeExportFilename(parsed.exportFilename, parsed.identity?.fullName || 'Candidate'),
+        codexModel: parsed.codexModel?.trim() || 'gpt-5.6-luna',
+        codexReasoningEffort: normalizeReasoningEffort(parsed.codexReasoningEffort)
       }
     } catch {
       return null
@@ -118,7 +123,9 @@ export class SettingsStore {
       exportFilename: sanitizeExportFilename('', identity.fullName || 'Candidate'),
       resumeProfiles,
       assistantProvider: 'codex',
-      editMode: this.readLegacyEditMode()
+      editMode: this.readLegacyEditMode(),
+      codexModel: 'gpt-5.6-luna',
+      codexReasoningEffort: 'low'
     }
   }
 
@@ -156,7 +163,9 @@ export function defaultSettings(): UserSettings {
     exportFilename: 'Candidate_Resume.pdf',
     resumeProfiles: [DEFAULT_RESUME_PROFILES[0]],
     assistantProvider: 'none',
-    editMode: 'review'
+    editMode: 'review',
+    codexModel: 'gpt-5.6-luna',
+    codexReasoningEffort: 'low'
   }
 }
 
@@ -175,6 +184,10 @@ export function slugifyProfileId(value: string): string {
 
 function mapIdentity(identity: CandidateIdentity): CandidateIdentity {
   return Object.fromEntries(Object.entries(identity).map(([key, value]) => [key, value.trim()])) as unknown as CandidateIdentity
+}
+
+function normalizeReasoningEffort(value?: CodexReasoningEffort): CodexReasoningEffort {
+  return value === 'medium' || value === 'high' ? value : 'low'
 }
 
 function titleCase(value: string): string {

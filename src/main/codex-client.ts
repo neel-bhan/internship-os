@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { delimiter, dirname, join } from 'node:path'
-import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexState } from '../shared/types'
+import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexReasoningEffort, CodexState } from '../shared/types'
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
@@ -32,7 +32,8 @@ export class CodexClient {
   constructor(
     private readonly projectRoot: string,
     private readonly paths: AppPaths,
-    initialEditMode: CodexEditMode = 'review'
+    initialEditMode: CodexEditMode = 'review',
+    private readonly modelSettings: { model: string; reasoningEffort: CodexReasoningEffort } = { model: 'gpt-5.6-luna', reasoningEffort: 'low' }
   ) {
     mkdirSync(this.paths.root, { recursive: true })
     this.editMode = this.readEditMode(initialEditMode)
@@ -55,6 +56,8 @@ export class CodexClient {
       accountLabel: this.accountLabel,
       threadId: this.threadId,
       editMode: this.editMode,
+      model: this.modelSettings.model,
+      reasoningEffort: this.modelSettings.reasoningEffort,
       error: this.error
     }
   }
@@ -139,15 +142,16 @@ export class CodexClient {
       await this.request('thread/name/set', { threadId: this.threadId, name: chatTitle(text) }).catch(() => undefined)
     }
 
-    const profilePath = this.getProfilePath()
     const modeInstruction = this.editMode === 'auto'
       ? 'AUTO APPLY mode: complete requested resume and tracker edits end-to-end. For resume changes, use the candidate and promote workflow so compilation and one-page validation happen before promotion.'
       : 'REVIEW FIRST mode: do not modify resumes, candidates, application records, tracker data, or other project files. Inspect freely and return a concrete proposed change. The only file you may update is the durable candidate profile when the user supplies a new verified fact.'
-    const requestText = `[Internship OS persistent context]\nRead ${JSON.stringify(profilePath)} before answering. Treat it as the durable source of verified candidate facts across chats. If this user message contains a new explicit fact, correction, durable preference, or constraint about the candidate, update that profile concisely. Never store claims inferred from a job description, AI output, or assumption. Never weaken or remove an existing fact without an explicit correction. Use the draft-list, draft-create, draft-select, draft-stop, and draft-delete commands documented in AGENTS.md whenever the user asks to manage temporary job drafts.\n\n${modeInstruction}\n\n[User request]\n${text}`
+    const requestText = `[Internship OS mode]\n${modeInstruction}\n\n[User request]\n${text}`
 
     await this.request('turn/start', {
       threadId: this.threadId,
       input: [{ type: 'text', text: requestText }],
+      model: this.modelSettings.model,
+      effort: this.modelSettings.reasoningEffort,
       cwd: this.projectRoot,
       approvalPolicy: 'on-request',
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.paths.root], networkAccess: false }
@@ -226,8 +230,9 @@ export class CodexClient {
       personality: 'friendly',
       serviceName: 'internship_os',
       threadSource: 'internship_os',
+      model: this.modelSettings.model,
       developerInstructions:
-        'Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end, use the bundled command surface, honor approval boundaries, rely on resume promotion for compilation and one-page validation, and never invent candidate facts.'
+        `Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end, use the bundled command surface, honor approval boundaries, rely on resume promotion for compilation and one-page validation, and never invent candidate facts. Read ${JSON.stringify(this.getProfilePath())} before requests that depend on candidate facts or change resume/tracker data; answer simple general questions directly. Persist only explicit candidate facts and corrections.`
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId

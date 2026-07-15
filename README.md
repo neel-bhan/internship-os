@@ -15,7 +15,7 @@ The setup command installs npm dependencies, downloads a verified repository-loc
 
 Onboarding collects a candidate name and optional links, creates the selected resume profiles, imports an optional `.tex` resume, checks LaTeX and assistant tools, and generates private `AGENTS.md` / `CLAUDE.md` instructions in the local app-data workspace.
 
-After onboarding, the Settings button can update identity, PDF filename, assistant behavior, and resume formats. Removing a format is non-destructive; re-adding the same format restores its existing local files.
+After onboarding, the Settings button can update identity, PDF filename, assistant behavior, Codex model and reasoning speed, and resume formats. Codex defaults to the faster `gpt-5.6-luna` model with low reasoning for everyday prompts. Removing a format is non-destructive; re-adding the same format restores its existing local files.
 
 ## Verify and package
 

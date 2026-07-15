@@ -4,6 +4,7 @@ import type {
   CodexConversation,
   CodexEditMode,
   CodexEvent,
+  CodexReasoningEffort,
   CodexState
 } from '../shared/types'
 import { AppPaths } from './core/paths'
@@ -29,9 +30,10 @@ export function createAssistantClient(
   workspaceRoot: string,
   paths: AppPaths,
   cliWrapperPath: string,
-  editMode: CodexEditMode
+  editMode: CodexEditMode,
+  codexSettings: { model: string; reasoningEffort: CodexReasoningEffort }
 ): AssistantClient {
-  if (provider === 'codex') return new CodexClient(workspaceRoot, paths, editMode)
+  if (provider === 'codex') return new CodexClient(workspaceRoot, paths, editMode, codexSettings)
   if (provider === 'claude') return new ClaudeClient(workspaceRoot, paths, cliWrapperPath, editMode)
   return new DisabledAssistantClient(editMode)
 }

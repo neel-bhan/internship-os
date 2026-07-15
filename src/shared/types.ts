@@ -48,6 +48,16 @@ export const DEFAULT_RESUME_PROFILES: ResumeProfile[] = [
 export const RESUME_PROFILES = DEFAULT_RESUME_PROFILES
 
 export type AssistantProviderId = 'codex' | 'claude' | 'none'
+export type CodexReasoningEffort = 'low' | 'medium' | 'high'
+
+export const CODEX_MODEL_OPTIONS = [
+  { id: 'gpt-5.6-luna', name: 'Fast', description: 'Fast everyday agentic work' },
+  { id: 'gpt-5.6-terra', name: 'Balanced', description: 'Balanced everyday agentic work' },
+  { id: 'gpt-5.6-sol', name: 'Frontier', description: 'Deepest current agentic coding model' },
+  { id: 'gpt-5.5', name: 'Complex work', description: 'Complex coding and research' },
+  { id: 'gpt-5.4', name: 'Everyday', description: 'Strong everyday coding model' },
+  { id: 'gpt-5.4-mini', name: 'Light', description: 'Small and fast for simple work' }
+] as const
 
 export interface CandidateIdentity {
   fullName: string
@@ -66,6 +76,8 @@ export interface UserSettings {
   resumeProfiles: ResumeProfile[]
   assistantProvider: AssistantProviderId
   editMode: CodexEditMode
+  codexModel: string
+  codexReasoningEffort: CodexReasoningEffort
 }
 
 export interface ToolCheck {
@@ -89,6 +101,8 @@ export interface OnboardingInput {
   resumeProfiles: ResumeProfile[]
   assistantProvider: AssistantProviderId
   editMode: CodexEditMode
+  codexModel?: string
+  codexReasoningEffort?: CodexReasoningEffort
   resumeSource?: string
 }
 
@@ -161,6 +175,8 @@ export interface CodexState {
   accountLabel: string
   threadId: string | null
   editMode: CodexEditMode
+  model?: string
+  reasoningEffort?: CodexReasoningEffort
   error?: string
 }
 
