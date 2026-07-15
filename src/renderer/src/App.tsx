@@ -24,6 +24,7 @@ pdfjs.GlobalWorkerOptions.workerPort = new PdfJsWorker()
 
 type View = 'tracker' | 'resume'
 type Theme = 'light' | 'dark'
+type AgentStage = 'hidden' | 'compose' | 'conversation'
 const initialTheme: Theme = (() => {
   const stored = localStorage.getItem('internship-os-theme')
   if (stored === 'light' || stored === 'dark') return stored
@@ -282,7 +283,7 @@ function leadingColumns(line: string): number {
 export default function App(): React.JSX.Element {
   const [view, setView] = useState<View>('resume')
   const [theme, setTheme] = useState<Theme>(initialTheme)
-  const [agentExpanded, setAgentExpanded] = useState(false)
+  const [agentStage, setAgentStage] = useState<AgentStage>('hidden')
   const [applications, setApplications] = useState<InternshipApplication[]>([])
   const [editing, setEditing] = useState<ApplicationInput | null>(null)
   const [resume, setResume] = useState<ResumeState | null>(null)
@@ -332,13 +333,13 @@ export default function App(): React.JSX.Element {
       } else if (command && event.key === '2') {
         event.preventDefault()
         setView('tracker')
-      } else if (command && event.key.toLowerCase() === 'k') {
+      } else if ((command && event.key.toLowerCase() === 'k') || (event.altKey && event.code === 'Space')) {
         event.preventDefault()
-        setAgentExpanded(true)
+        setAgentStage((current) => current === 'hidden' ? 'compose' : current)
         window.setTimeout(() => codexInputRef.current?.focus(), 0)
-      } else if (event.key === 'Escape' && agentExpanded) {
+      } else if (event.key === 'Escape' && agentStage !== 'hidden') {
         event.preventDefault()
-        setAgentExpanded(false)
+        setAgentStage((current) => current === 'conversation' ? 'compose' : 'hidden')
       } else if (command && event.key.toLowerCase() === 's' && view === 'resume') {
         event.preventDefault()
         void resumeAction('save')
@@ -346,7 +347,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [agentExpanded, draftDialogOpen, view, source])
+  }, [agentStage, draftDialogOpen, view, source])
 
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
@@ -513,7 +514,7 @@ export default function App(): React.JSX.Element {
     setMessage('')
     setChat((items) => [...items, { id: crypto.randomUUID(), role: 'user', text }])
     setCodexBusy(true)
-    setAgentExpanded(true)
+    setAgentStage('conversation')
     try {
       await window.internshipOS.codex.send(text)
     } catch (error) {
@@ -723,15 +724,15 @@ export default function App(): React.JSX.Element {
             />
           )}
         </section>
-        <CodexDock
+        <CodexLauncher
           inputRef={codexInputRef}
-          expanded={agentExpanded}
+          stage={agentStage}
           context={view === 'tracker' ? 'Applications' : resume?.jobDraft.active ? `${resume.jobDraft.name} · ${resume.profileName}` : resume?.profileName ?? 'Resume'}
           state={codexState}
           items={chat}
           value={message}
           busy={codexBusy}
-          onExpandedChange={setAgentExpanded}
+          onStageChange={setAgentStage}
           onValueChange={setMessage}
           onSend={() => void sendMessage()}
           onEditModeChange={(mode) => void changeEditMode(mode)}
@@ -1100,15 +1101,15 @@ function WorkspaceActions(props: {
   )
 }
 
-function CodexDock(props: {
+function CodexLauncher(props: {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
-  expanded: boolean
+  stage: AgentStage
   context: string
   state: CodexState | null
   items: ChatItem[]
   value: string
   busy: boolean
-  onExpandedChange: (expanded: boolean) => void
+  onStageChange: (stage: AgentStage) => void
   onValueChange: (value: string) => void
   onSend: () => void
   onEditModeChange: (mode: CodexEditMode) => void
@@ -1116,36 +1117,53 @@ function CodexDock(props: {
   onReconnect: () => void
   onApproval: (itemId: string, requestId: string | number, decision: 'accept' | 'decline') => void
 }): React.JSX.Element {
-  const { inputRef, expanded, context, state, items, value, busy, onExpandedChange, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
+  const { inputRef, stage, context, state, items, value, busy, onStageChange, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (expanded) endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [items, busy, expanded])
+    if (stage === 'conversation') endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [items, busy, stage])
 
   useEffect(() => {
-    if (expanded) window.setTimeout(() => inputRef.current?.focus(), 0)
-  }, [expanded, inputRef])
+    if (stage !== 'hidden') window.setTimeout(() => inputRef.current?.focus(), 0)
+  }, [stage, inputRef])
 
   const mode = state?.editMode ?? 'review'
   const status = !state?.authenticated ? 'Offline' : busy ? 'Working' : 'Ready'
 
   function send(): void {
     if (!value.trim() || busy || !state?.authenticated) return
-    onExpandedChange(true)
+    onStageChange('conversation')
     onSend()
   }
 
   return (
-    <div className={`codex-layer ${expanded ? 'expanded' : ''}`}>
-      {!expanded ? (
-        <button className="codex-fab" aria-label="Open Codex" title="Open Codex (⌘K)" onClick={() => onExpandedChange(true)}>
+    <div className={`codex-layer ${stage}`}>
+      {stage === 'compose' && (
+        <section className="codex-quick" aria-label="Codex quick prompt">
           <span className="agent-mark"><Icon name="codex" /></span>
-          <span>Codex</span>
-          <kbd>⌘K</kbd>
-          <i className={!state?.authenticated ? 'offline' : busy ? 'working' : ''} />
-        </button>
-      ) : (
+          <span className="codex-quick-context" title={context}>{context}</span>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={value}
+            placeholder="Ask Codex…"
+            aria-label="Message Codex"
+            onChange={(event) => onValueChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                send()
+              }
+            }}
+          />
+          <kbd>⌥Space</kbd>
+          <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status} onClick={() => onStageChange('conversation')}><i /></button>
+          <button className="codex-quick-close" aria-label="Hide Codex" title="Hide Codex (Esc)" onClick={() => onStageChange('hidden')}>×</button>
+          <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
+        </section>
+      )}
+      {stage === 'conversation' && (
         <section className="codex-float" aria-label="Codex conversation">
           <header className="codex-overlay-header">
             <div className="agent-identity">
@@ -1159,7 +1177,7 @@ function CodexDock(props: {
                 <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto</button>
               </div>
               <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status}><i /></button>
-              <button className="codex-collapse" aria-label="Close Codex" title="Close Codex (Esc)" onClick={() => onExpandedChange(false)}>×</button>
+              <button className="codex-collapse" aria-label="Collapse Codex" title="Return to quick prompt (Esc)" onClick={() => onStageChange('compose')}>⌄</button>
             </div>
           </header>
           <div className="codex-float-body">
