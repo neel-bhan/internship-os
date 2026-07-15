@@ -297,6 +297,7 @@ export default function App(): React.JSX.Element {
   const [chatHistory, setChatHistory] = useState<CodexChatSummary[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyBusy, setHistoryBusy] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
   const [draftDialogOpen, setDraftDialogOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [draftProfileId, setDraftProfileId] = useState('general-swe')
@@ -342,6 +343,9 @@ export default function App(): React.JSX.Element {
       if (event.key === 'Escape' && draftDialogOpen) {
         event.preventDefault()
         setDraftDialogOpen(false)
+      } else if (event.key === 'Escape' && statsOpen) {
+        event.preventDefault()
+        setStatsOpen(false)
       } else if (command && event.key === '1') {
         event.preventDefault()
         setView('resume')
@@ -362,7 +366,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [agentStage, chat.length, draftDialogOpen, view, source])
+  }, [agentStage, chat.length, draftDialogOpen, statsOpen, view, source])
 
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
@@ -720,7 +724,10 @@ export default function App(): React.JSX.Element {
                 </details>
               </>
             ) : (
-              <button className="primary" onClick={() => setEditing({ ...emptyApplication })}>+ Add application</button>
+              <>
+                <button className="stats-action" onClick={() => setStatsOpen(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7" /></svg>Stats</button>
+                <button className="primary" onClick={() => setEditing({ ...emptyApplication })}>+ Add application</button>
+              </>
             )}
           </div>
           <button
@@ -775,6 +782,11 @@ export default function App(): React.JSX.Element {
                 <button className="primary" type="submit" disabled={busy || !draftName.trim()}>Create Draft</button>
               </div>
             </form>
+          </div>
+        )}
+        {statsOpen && (
+          <div className="stats-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setStatsOpen(false) }}>
+            <ApplicationStats applications={applications} onClose={() => setStatsOpen(false)} />
           </div>
         )}
         <section className="primary-panel">
@@ -878,6 +890,90 @@ function Tracker(props: {
       </div>
     </div>
   )
+}
+
+type ApplicationHeatmapDay = {
+  date: Date
+  key: string
+  count: number
+  future: boolean
+}
+
+function ApplicationStats({ applications, onClose }: { applications: InternshipApplication[]; onClose: () => void }): React.JSX.Element {
+  const totals = useMemo(() => ({
+    total: applications.length,
+    inProgress: applications.filter((application) => application.status === 'In Progress').length,
+    rejected: applications.filter((application) => application.status === 'Rejected').length
+  }), [applications])
+  const weeks = useMemo(() => applicationHeatmap(applications), [applications])
+  const monthLabels = weeks.map((week, index) => {
+    const previousMonth = index > 0 ? weeks[index - 1][0].date.getMonth() : -1
+    return week[0].date.getMonth() !== previousMonth ? week[0].date.toLocaleDateString(undefined, { month: 'short' }) : ''
+  })
+
+  return (
+    <section className="stats-sheet" role="dialog" aria-modal="true" aria-labelledby="stats-title">
+      <header className="stats-heading">
+        <div><strong id="stats-title">Application Stats</strong><span>Your local internship application activity</span></div>
+        <button className="stats-close" aria-label="Close stats" onClick={onClose}>×</button>
+      </header>
+      <div className="stats-cards">
+        <div className="stats-card total"><span>Total applications</span><strong>{totals.total}</strong></div>
+        <div className="stats-card progress"><span>In progress</span><strong>{totals.inProgress}</strong></div>
+        <div className="stats-card rejected"><span>Rejected</span><strong>{totals.rejected}</strong></div>
+      </div>
+      <div className="heatmap-card">
+        <div className="heatmap-heading"><div><strong>Application activity</strong><span>Last 12 months</span></div><div className="heatmap-legend"><span>Less</span>{[0, 1, 2, 3, 4].map((level) => <i key={level} className={`level-${level}`} />)}<span>More</span></div></div>
+        <div className="heatmap-scroll">
+          <div className="heatmap-layout">
+            <div />
+            <div className="heatmap-months">{monthLabels.map((month, index) => <span key={`${month}-${index}`}>{month}</span>)}</div>
+            <div className="heatmap-weekdays"><span /><span>Mon</span><span /><span>Wed</span><span /><span>Fri</span><span /></div>
+            <div className="application-heatmap">
+              {weeks.flat().map((day) => (
+                <i
+                  key={day.key}
+                  className={`level-${Math.min(day.count, 4)} ${day.future ? 'future' : ''}`}
+                  title={`${day.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}: ${day.count} application${day.count === 1 ? '' : 's'}`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function applicationHeatmap(applications: InternshipApplication[]): ApplicationHeatmapDay[][] {
+  const counts = new Map<string, number>()
+  for (const application of applications) {
+    const key = application.dateApplied && /^\d{4}-\d{2}-\d{2}$/.test(application.dateApplied)
+      ? application.dateApplied
+      : dateKey(new Date(application.createdAt))
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const end = new Date(today)
+  end.setDate(end.getDate() + (6 - end.getDay()))
+  const start = new Date(end)
+  start.setDate(end.getDate() - (53 * 7 - 1))
+
+  return Array.from({ length: 53 }, (_, weekIndex) =>
+    Array.from({ length: 7 }, (_, dayIndex) => {
+      const date = new Date(start)
+      date.setDate(start.getDate() + weekIndex * 7 + dayIndex)
+      const key = dateKey(date)
+      return { date, key, count: counts.get(key) ?? 0, future: date > today }
+    })
+  )
+}
+
+function dateKey(date: Date): string {
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 function parseCompactDiff(diff: string): DiffRow[] {
