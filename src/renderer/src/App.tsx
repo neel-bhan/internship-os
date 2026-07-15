@@ -47,9 +47,8 @@ document.documentElement.style.colorScheme = initialTheme
 
 type ChatItem = {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'diff'
   text: string
-  approval?: { requestId: string | number }
 }
 
 type DiffRow = {
@@ -410,8 +409,8 @@ function Onboarding({ initial, onComplete }: { initial: OnboardingState; onCompl
           {step === 0 && <div className="welcome-step"><p className="eyebrow">WELCOME</p><h1>Your internship workspace,<br />set up around you.</h1><p>Track applications, manage tailored resume profiles, and work with Codex or Claude without giving up local control.</p><div className="welcome-features"><span>✓ Local application tracker</span><span>✓ Safe resume versions</span><span>✓ Optional AI assistant</span></div></div>}
           {step === 1 && <><p className="eyebrow">ABOUT YOU</p><h1>Let’s personalize your workspace.</h1><p className="onboarding-lead">Only your name is required. These details prefill a starter resume and your private candidate profile.</p><div className="identity-grid"><label className="wide">Full name *<input autoFocus value={identity.fullName} onChange={(event) => setIdentity({ ...identity, fullName: event.target.value })} /></label><label>Email<input type="email" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label><label>Phone<input value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value })} /></label><label>Portfolio<input placeholder="yourname.dev" value={identity.portfolio} onChange={(event) => setIdentity({ ...identity, portfolio: event.target.value })} /></label><label>GitHub<input placeholder="github.com/username" value={identity.github} onChange={(event) => setIdentity({ ...identity, github: event.target.value })} /></label><label className="wide">LinkedIn<input placeholder="linkedin.com/in/username" value={identity.linkedin} onChange={(event) => setIdentity({ ...identity, linkedin: event.target.value })} /></label></div></>}
           {step === 2 && <><p className="eyebrow">RESUME FORMATS</p><h1>Which resumes do you want to keep?</h1><p className="onboarding-lead">Each format gets independent source, PDF, drafts, history, and undo. Choose common formats or add your own.</p><div className="profile-grid">{DEFAULT_RESUME_PROFILES.map((profile) => { const selected = profiles.some((item) => item.id === profile.id); return <button type="button" key={profile.id} className={`profile-choice ${selected ? 'selected' : ''}`} onClick={() => toggleProfile(profile)}><i>{selected ? '✓' : '+'}</i><strong>{profile.name}</strong><span>{profile.focus}</span></button> })}</div><div className="custom-profile"><input placeholder="Format name, e.g. Security" value={customName} onChange={(event) => setCustomName(event.target.value)} /><input placeholder="Focus, e.g. security engineering roles" value={customFocus} onChange={(event) => setCustomFocus(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addCustomProfile() }} /><button onClick={addCustomProfile} disabled={!customName.trim()}>Add format</button></div><div className="selected-profiles"><div className="selected-profiles-heading"><strong>Formats you’ll keep</strong><span>{profiles.length} selected</span></div>{profiles.length === 0 ? <p>Select or add at least one format.</p> : profiles.map((profile) => <div className="selected-profile-row" key={profile.id}><span><strong>{profile.name}</strong><small>{profile.focus}</small></span><button type="button" onClick={() => removeProfile(profile.id)}>Remove</button></div>)}</div><button className="import-resume" onClick={() => void chooseResume()}>{resumeFile ? `✓ ${resumeFile}` : 'Import existing .tex resume…'}</button></>}
-          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS uses the provider already installed and signed in on your Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.available ? 'Setup needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}{provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}<div className="mode-choice"><div><strong>Review first</strong><span>Assistant proposes changes without modifying managed data.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Assistant may make and verify requested local edits.</span></div></div></>}
-          {step === 4 && <><div className="ready-mark">✓</div><p className="eyebrow">READY</p><h1>Your workspace is ready.</h1><p className="onboarding-lead">{profiles.length} resume profile{profiles.length === 1 ? '' : 's'} · {provider === 'none' ? 'No assistant' : provider === 'codex' ? 'Codex' : 'Claude'} · {editMode === 'review' ? 'Review first' : 'Auto apply'}</p><div className="ready-summary"><span><strong>Resume</strong>{resumeFile ? `Imported from ${resumeFile}` : 'New starter template'}</span><span><strong>PDF export</strong>{(identity.fullName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf</span><span><strong>Storage</strong>Local application data</span></div></>}
+          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS uses the provider already installed and signed in on your Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.available ? 'Setup needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}{provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}<div className="mode-choice"><div><strong>Review</strong><span>Apply local edits and show the final diff in chat.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Complete the full local workflow automatically.</span></div></div></>}
+          {step === 4 && <><div className="ready-mark">✓</div><p className="eyebrow">READY</p><h1>Your workspace is ready.</h1><p className="onboarding-lead">{profiles.length} resume profile{profiles.length === 1 ? '' : 's'} · {provider === 'none' ? 'No assistant' : provider === 'codex' ? 'Codex' : 'Claude'} · {editMode === 'review' ? 'Review' : 'Auto apply'}</p><div className="ready-summary"><span><strong>Resume</strong>{resumeFile ? `Imported from ${resumeFile}` : 'New starter template'}</span><span><strong>PDF export</strong>{(identity.fullName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf</span><span><strong>Storage</strong>Local application data</span></div></>}
           {error && <div className="onboarding-error">{error}</div>}
         </div>
         <footer className="onboarding-actions">{step > 0 ? <button className="ghost" disabled={busy} onClick={() => setStep((current) => current - 1)}>Back</button> : <span />}{step < 4 ? <button className="primary" disabled={!canContinue || busy} onClick={() => setStep((current) => current + 1)}>{step === 0 ? 'Get started' : 'Continue'}</button> : <button className="primary" disabled={busy} onClick={() => void finish()}>{busy ? 'Creating workspace…' : 'Open Internship OS'}</button>}</footer>
@@ -529,7 +528,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       if (event.type === 'message-delta') {
         setChat((items) => {
           const last = items.at(-1)
-          if (last?.role === 'assistant' && !last.approval) {
+          if (last?.role === 'assistant') {
             return [...items.slice(0, -1), { ...last, text: last.text + event.text }]
           }
           return [...items, { id: crypto.randomUUID(), role: 'assistant', text: event.text }]
@@ -545,16 +544,17 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
         })
       } else if (event.type === 'command') {
         setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: `Running: ${event.text}` }])
-      } else if (event.type === 'approval') {
-        setChat((items) => [
-          ...items,
-          {
-            id: crypto.randomUUID(),
-            role: 'system',
-            text: event.summary,
-            approval: { requestId: event.requestId }
+      } else if (event.type === 'diff') {
+        setChat((items) => {
+          let lastUserIndex = -1
+          for (let index = items.length - 1; index >= 0; index -= 1) {
+            if (items[index].role === 'user') { lastUserIndex = index; break }
           }
-        ])
+          const diffIndex = items.findIndex((item, index) => index > lastUserIndex && item.role === 'diff')
+          if (!event.text.trim()) return diffIndex >= 0 ? items.filter((_, index) => index !== diffIndex) : items
+          if (diffIndex >= 0) return items.map((item, index) => index === diffIndex ? { ...item, text: event.text } : item)
+          return [...items, { id: crypto.randomUUID(), role: 'diff', text: event.text }]
+        })
       } else if (event.type === 'error') {
         setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }])
         setCodexBusy(false)
@@ -755,14 +755,17 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     }
   }
 
-  async function decideApproval(itemId: string, requestId: string | number, decision: 'accept' | 'decline'): Promise<void> {
-    await window.internshipOS.codex.respondToApproval(requestId, decision)
-    setChat((items) => items.map((item) => (item.id === itemId ? { ...item, approval: undefined, text: `${item.text} — ${decision}ed` } : item)))
-  }
-
   async function changeEditMode(mode: CodexEditMode): Promise<void> {
     try {
       setCodexState(await window.internshipOS.codex.setEditMode(mode))
+    } catch (error) {
+      showError(error)
+    }
+  }
+
+  async function changeCodexPerformance(model: string, reasoningEffort: CodexReasoningEffort): Promise<void> {
+    try {
+      setCodexState(await window.internshipOS.codex.setModelSettings(model, reasoningEffort))
     } catch (error) {
       showError(error)
     }
@@ -1024,9 +1027,11 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
           onValueChange={setMessage}
           onSend={() => void sendMessage()}
           onEditModeChange={(mode) => void changeEditMode(mode)}
+          onModelChange={(model) => void changeCodexPerformance(model, codexState?.reasoningEffort ?? 'low')}
+          onReasoningEffortChange={(effort) => void changeCodexPerformance(codexState?.model ?? 'gpt-5.6-luna', effort)}
           onOpenProfile={() => void window.internshipOS.codex.openProfile().catch(showError)}
+          onOpenSettings={() => void openSettings()}
           onReconnect={() => void window.internshipOS.codex.connect().then(setCodexState).catch(showError)}
-          onApproval={(itemId, requestId, decision) => void decideApproval(itemId, requestId, decision)}
         />
       </main>
     </div>
@@ -1180,8 +1185,8 @@ function SettingsDialog({ initial, onClose, onSaved }: { initial: OnboardingStat
             {provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="settings-setup-row"><span>{selectedTool.message}</span><button type="button" onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button type="button" onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}
             {provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}
             <div className="settings-mode">
-              <button type="button" className={editMode === 'review' ? 'selected' : ''} onClick={() => setEditMode('review')}><strong>Review first</strong><span>Propose changes without editing managed data.</span></button>
-              <button type="button" className={editMode === 'auto' ? 'selected' : ''} onClick={() => setEditMode('auto')}><strong>Auto apply</strong><span>Make and verify requested local edits.</span></button>
+              <button type="button" className={editMode === 'review' ? 'selected' : ''} onClick={() => setEditMode('review')}><strong>Review</strong><span>Apply local edits and show the final diff in chat.</span></button>
+              <button type="button" className={editMode === 'auto' ? 'selected' : ''} onClick={() => setEditMode('auto')}><strong>Auto apply</strong><span>Complete the full local workflow automatically.</span></button>
             </div>
           </section>
           {error && <div className="settings-error" role="alert">{error}</div>}
@@ -1643,6 +1648,24 @@ function relativeChatTime(timestamp: number): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function CodexDiff({ diff }: { diff: string }): React.JSX.Element {
+  const lines = diff.split(/\r?\n/)
+  const added = lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length
+  const removed = lines.filter((line) => line.startsWith('-') && !line.startsWith('---')).length
+
+  return (
+    <div className="codex-diff-card">
+      <div className="codex-diff-heading"><strong>Applied changes</strong><span><i>+{added}</i><b>−{removed}</b></span></div>
+      <pre>{lines.map((line, index) => {
+        const type = line.startsWith('diff --git') || line.startsWith('---') || line.startsWith('+++')
+          ? 'meta'
+          : line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : 'context'
+        return <span className={type} key={`${index}-${line.slice(0, 24)}`}>{line || ' '}</span>
+      })}</pre>
+    </div>
+  )
+}
+
 function CodexLauncher(props: {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   stage: AgentStage
@@ -1661,11 +1684,13 @@ function CodexLauncher(props: {
   onValueChange: (value: string) => void
   onSend: () => void
   onEditModeChange: (mode: CodexEditMode) => void
+  onModelChange: (model: string) => void
+  onReasoningEffortChange: (effort: CodexReasoningEffort) => void
   onOpenProfile: () => void
+  onOpenSettings: () => void
   onReconnect: () => void
-  onApproval: (itemId: string, requestId: string | number, decision: 'accept' | 'decline') => void
 }): React.JSX.Element {
-  const { inputRef, stage, context, state, items, history, historyOpen, historyBusy, value, busy, onStageChange, onToggleHistory, onOpenChat, onNewChat, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
+  const { inputRef, stage, context, state, items, history, historyOpen, historyBusy, value, busy, onStageChange, onToggleHistory, onOpenChat, onNewChat, onValueChange, onSend, onEditModeChange, onModelChange, onReasoningEffortChange, onOpenProfile, onOpenSettings, onReconnect } = props
   const feedRef = useRef<HTMLDivElement>(null)
   const feedWasVisibleRef = useRef(false)
   const followLatestRef = useRef(true)
@@ -1742,21 +1767,29 @@ function CodexLauncher(props: {
           <header className="codex-overlay-header">
             <div className="agent-identity">
               <span className="agent-mark"><Icon name="codex" /></span>
-              <div><strong>{providerName}</strong><span>{context}{state?.model ? ` · ${state.model} · ${state.reasoningEffort}` : ''}</span></div>
+              <div><strong>{providerName}</strong><span>{context}</span></div>
             </div>
             <div className="agent-header-actions">
               <button className={`codex-history-button ${historyOpen ? 'active' : ''}`} aria-label="Previous chats" title="Previous chats" disabled={busy} onClick={onToggleHistory}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6M12 7.5V12l3 1.8" /></svg>
               </button>
-              <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
-              <div className="edit-mode-switch compact" role="group" aria-label={`${providerName} edit mode`}>
-                <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title={`${providerName} proposes changes but does not apply them`}>Review</button>
-                <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title={`${providerName} applies requested changes and compiles automatically`}>Auto</button>
-              </div>
               <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`${providerName} is ${status}`} title={status}><i /></button>
               <button className="codex-collapse" aria-label={`Hide ${providerName}`} title={`Hide ${providerName} (Esc)`} onClick={() => onStageChange('hidden')}>×</button>
             </div>
           </header>
+          <div className="codex-control-bar">
+            {state?.provider === 'codex' && <>
+              <label><span>Model</span><select aria-label="Codex model" value={state.model ?? 'gpt-5.6-luna'} disabled={busy} onChange={(event) => onModelChange(event.target.value)}>{CODEX_MODEL_OPTIONS.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}</select></label>
+              <label><span>Reasoning</span><select aria-label="Codex reasoning" value={state.reasoningEffort ?? 'low'} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as CodexReasoningEffort)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+            </>}
+            <div className="edit-mode-switch compact" role="group" aria-label={`${providerName} edit mode`}>
+              <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Apply local edits and show the final diff in chat">Review</button>
+              <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Complete the full local workflow automatically">Auto</button>
+            </div>
+            <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
+            <button className="profile-button" onClick={onOpenSettings}>App settings</button>
+            <span className="codex-visible-status"><i className={!state?.authenticated ? 'offline' : busy ? 'working' : ''} />{status} · {state?.accountLabel ?? 'Not connected'}</span>
+          </div>
           {historyOpen ? (
             <div className="codex-history">
               <div className="codex-history-heading"><div><strong>Recent chats</strong><span>Only Internship OS conversations</span></div><button className="primary" disabled={busy || historyBusy} onClick={onNewChat}>＋ New</button></div>
@@ -1788,8 +1821,8 @@ function CodexLauncher(props: {
                     {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask {providerName} to tailor this resume or manage an application.</p></div>}
                     {items.map((item) => (
                       <article key={item.id} className={`agent-message ${item.role}`}>
-                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : 'Activity'}</div>
-                        <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
+                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : 'Activity'}</div>
+                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : <p>{item.text}</p>}</div>
                       </article>
                     ))}
                     {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}

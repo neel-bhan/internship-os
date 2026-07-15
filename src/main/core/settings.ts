@@ -72,6 +72,16 @@ export class SettingsStore {
     return this.get()
   }
 
+  updateCodexSettings(model: string, reasoningEffort: CodexReasoningEffort): UserSettings {
+    this.settings = {
+      ...this.settings,
+      codexModel: model.trim() || 'gpt-5.6-luna',
+      codexReasoningEffort: normalizeReasoningEffort(reasoningEffort)
+    }
+    this.write(this.settings)
+    return this.get()
+  }
+
   private read(): UserSettings | null {
     try {
       const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as UserSettings

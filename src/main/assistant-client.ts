@@ -17,6 +17,7 @@ export interface AssistantClient {
   connect(): Promise<CodexState>
   send(text: string): Promise<void>
   setEditMode(mode: CodexEditMode): CodexState
+  setModelSettings(model: string, reasoningEffort: CodexReasoningEffort): Promise<CodexState>
   getProfilePath(): string
   listChats(): Promise<CodexChatSummary[]>
   openChat(threadId: string): Promise<CodexConversation>
@@ -48,6 +49,7 @@ class DisabledAssistantClient {
   async connect(): Promise<CodexState> { return this.getState() }
   async send(_text: string): Promise<void> { throw new Error('No assistant provider is configured.') }
   setEditMode(mode: CodexEditMode): CodexState { this.editMode = mode; return this.getState() }
+  async setModelSettings(_model: string, _reasoningEffort: CodexReasoningEffort): Promise<CodexState> { return this.getState() }
   getProfilePath(): string { throw new Error('No assistant provider is configured.') }
   async listChats(): Promise<CodexChatSummary[]> { return [] }
   async openChat(_threadId: string): Promise<CodexConversation> { throw new Error('No assistant provider is configured.') }

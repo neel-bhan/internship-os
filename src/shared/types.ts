@@ -189,7 +189,7 @@ export interface CodexChatSummary {
 
 export interface CodexChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'diff'
   text: string
 }
 
@@ -235,6 +235,7 @@ export interface InternshipOsApi {
     getState(): Promise<CodexState>
     connect(): Promise<CodexState>
     setEditMode(mode: CodexEditMode): Promise<CodexState>
+    setModelSettings(model: string, reasoningEffort: CodexReasoningEffort): Promise<CodexState>
     openProfile(): Promise<void>
     listChats(): Promise<CodexChatSummary[]>
     openChat(threadId: string): Promise<CodexConversation>

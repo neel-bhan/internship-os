@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ApplicationInput, CodexEditMode, CodexEvent, InternshipOsApi } from '../shared/types'
+import type { ApplicationInput, CodexEditMode, CodexEvent, CodexReasoningEffort, InternshipOsApi } from '../shared/types'
 
 const api: InternshipOsApi = {
   onboarding: {
@@ -38,6 +38,7 @@ const api: InternshipOsApi = {
     getState: () => ipcRenderer.invoke('codex:get-state'),
     connect: () => ipcRenderer.invoke('codex:connect'),
     setEditMode: (mode: CodexEditMode) => ipcRenderer.invoke('codex:set-edit-mode', mode),
+    setModelSettings: (model: string, reasoningEffort: CodexReasoningEffort) => ipcRenderer.invoke('codex:set-model-settings', model, reasoningEffort),
     openProfile: () => ipcRenderer.invoke('codex:open-profile'),
     listChats: () => ipcRenderer.invoke('codex:list-chats'),
     openChat: (threadId: string) => ipcRenderer.invoke('codex:open-chat', threadId),

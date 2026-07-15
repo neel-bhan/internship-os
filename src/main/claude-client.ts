@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import { randomUUID } from 'node:crypto'
 import { delimiter, join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type { CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexState } from '../shared/types'
+import type { CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexReasoningEffort, CodexState } from '../shared/types'
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
@@ -130,6 +130,10 @@ export class ClaudeClient {
 
   setEditMode(mode: CodexEditMode): CodexState {
     this.editMode = mode
+    return this.getState()
+  }
+
+  async setModelSettings(_model: string, _reasoningEffort: CodexReasoningEffort): Promise<CodexState> {
     return this.getState()
   }
 

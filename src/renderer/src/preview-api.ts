@@ -2,6 +2,7 @@ import resumeSource from '../../../main.tex?raw'
 import {
   RESUME_PROFILES,
   type ApplicationInput,
+  type CodexEvent,
   type CodexState,
   type InternshipApplication,
   type InternshipOsApi,
@@ -42,7 +43,8 @@ export function installBrowserPreviewApi(): void {
       changedAt: new Date().toISOString()
     }
   }
-  let codex: CodexState = { provider: 'codex', providerName: 'Codex', available: true, connected: false, authenticated: false, accountLabel: 'Preview', threadId: null, editMode: 'review', model: previewSettings.codexModel, reasoningEffort: previewSettings.codexReasoningEffort }
+  let codexEventSink: (event: CodexEvent) => void = () => undefined
+  let codex: CodexState = { provider: 'codex', providerName: 'Codex', available: true, connected: true, authenticated: true, accountLabel: 'preview@example.com', threadId: 'preview-chat', editMode: 'review', model: previewSettings.codexModel, reasoningEffort: previewSettings.codexReasoningEffort }
 
   window.internshipOS = {
     onboarding: {
@@ -152,13 +154,26 @@ export function installBrowserPreviewApi(): void {
       getState: async () => codex,
       connect: async () => codex,
       setEditMode: async (editMode) => (codex = { ...codex, editMode }),
+      setModelSettings: async (model, reasoningEffort) => {
+        previewSettings = { ...previewSettings, codexModel: model, codexReasoningEffort: reasoningEffort }
+        return (codex = { ...codex, model, reasoningEffort })
+      },
       openProfile: async () => undefined,
       listChats: async () => [],
       openChat: async (threadId: string) => ({ state: (codex = { ...codex, threadId }), messages: [] }),
       newChat: async () => ({ state: (codex = { ...codex, threadId: null }), messages: [] }),
-      send: async () => undefined,
+      send: async () => {
+        queueMicrotask(() => {
+          codexEventSink({ type: 'diff', text: 'diff --git a/resume.tex b/resume.tex\n--- a/resume.tex\n+++ b/resume.tex\n@@ -12,1 +12,1 @@\n-Old resume bullet\n+Updated resume bullet' })
+          codexEventSink({ type: 'message', text: 'Applied the local edit. The final diff is shown above.' })
+          codexEventSink({ type: 'turn-completed' })
+        })
+      },
       respondToApproval: async () => undefined,
-      onEvent: () => () => undefined
+      onEvent: (callback) => {
+        codexEventSink = callback
+        return () => { codexEventSink = () => undefined }
+      }
     }
   } satisfies InternshipOsApi
 }

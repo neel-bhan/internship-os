@@ -4,7 +4,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ApplicationInput, AssistantProviderId, CodexEditMode, OnboardingInput, SettingsInput, ToolCheck } from '../shared/types'
+import type { ApplicationInput, AssistantProviderId, CodexEditMode, CodexReasoningEffort, OnboardingInput, SettingsInput, ToolCheck } from '../shared/types'
 import { ApplicationStore } from './core/database'
 import { AppPaths } from './core/paths'
 import { ResumeManager } from './core/resume'
@@ -181,6 +181,10 @@ function registerIpc(): void {
   ipcMain.handle('codex:set-edit-mode', (_event, mode: CodexEditMode) => {
     settingsStore.updateEditMode(mode)
     return requireAssistant().setEditMode(mode)
+  })
+  ipcMain.handle('codex:set-model-settings', (_event, model: string, reasoningEffort: CodexReasoningEffort) => {
+    settingsStore.updateCodexSettings(model, reasoningEffort)
+    return requireAssistant().setModelSettings(model, reasoningEffort)
   })
   ipcMain.handle('codex:open-profile', async () => {
     const error = await shell.openPath(requireAssistant().getProfilePath())

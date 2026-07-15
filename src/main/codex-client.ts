@@ -6,7 +6,7 @@ import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMo
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
-const THREAD_INSTRUCTION_VERSION = 2
+const THREAD_INSTRUCTION_VERSION = 3
 
 interface RpcMessage {
   id?: string | number
@@ -33,7 +33,7 @@ export class CodexClient {
     private readonly projectRoot: string,
     private readonly paths: AppPaths,
     initialEditMode: CodexEditMode = 'review',
-    private readonly modelSettings: { model: string; reasoningEffort: CodexReasoningEffort } = { model: 'gpt-5.6-luna', reasoningEffort: 'low' }
+    private modelSettings: { model: string; reasoningEffort: CodexReasoningEffort } = { model: 'gpt-5.6-luna', reasoningEffort: 'low' }
   ) {
     mkdirSync(this.paths.root, { recursive: true })
     this.editMode = this.readEditMode(initialEditMode)
@@ -144,7 +144,7 @@ export class CodexClient {
 
     const modeInstruction = this.editMode === 'auto'
       ? 'AUTO APPLY mode: complete requested resume and tracker edits end-to-end. For resume changes, use the candidate and promote workflow so compilation and one-page validation happen before promotion.'
-      : 'REVIEW FIRST mode: do not modify resumes, candidates, application records, tracker data, or other project files. Inspect freely and return a concrete proposed change. The only file you may update is the durable candidate profile when the user supplies a new verified fact.'
+      : 'REVIEW mode: make requested local workspace edits immediately without asking for approval, then finish by summarizing the applied changes. Use the safe candidate and promote workflow for resumes. Do not perform external, destructive, or irreversible actions.'
     const requestText = `[Internship OS mode]\n${modeInstruction}\n\n[User request]\n${text}`
 
     await this.request('turn/start', {
@@ -153,7 +153,7 @@ export class CodexClient {
       model: this.modelSettings.model,
       effort: this.modelSettings.reasoningEffort,
       cwd: this.projectRoot,
-      approvalPolicy: 'on-request',
+      approvalPolicy: 'never',
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.paths.root], networkAccess: false }
     })
   }
@@ -162,6 +162,18 @@ export class CodexClient {
     if (mode !== 'review' && mode !== 'auto') throw new Error('Unknown Codex edit mode.')
     this.editMode = mode
     writeFileSync(this.settingsPath(), JSON.stringify({ editMode: mode }, null, 2))
+    return this.getState()
+  }
+
+  async setModelSettings(model: string, reasoningEffort: CodexReasoningEffort): Promise<CodexState> {
+    this.modelSettings = { model: model.trim() || 'gpt-5.6-luna', reasoningEffort }
+    if (this.connected && this.threadId) {
+      await this.request('thread/settings/update', {
+        threadId: this.threadId,
+        model: this.modelSettings.model,
+        effort: this.modelSettings.reasoningEffort
+      })
+    }
     return this.getState()
   }
 
@@ -225,14 +237,14 @@ export class CodexClient {
   private async startThread(): Promise<void> {
     const result = await this.request('thread/start', {
       cwd: this.projectRoot,
-      approvalPolicy: 'on-request',
+      approvalPolicy: 'never',
       sandbox: 'workspace-write',
       personality: 'friendly',
       serviceName: 'internship_os',
       threadSource: 'internship_os',
       model: this.modelSettings.model,
       developerInstructions:
-        `Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end, use the bundled command surface, honor approval boundaries, rely on resume promotion for compilation and one-page validation, and never invent candidate facts. Read ${JSON.stringify(this.getProfilePath())} before requests that depend on candidate facts or change resume/tracker data; answer simple general questions directly. Persist only explicit candidate facts and corrections.`
+        `Operate the local Internship OS using AGENTS.md. Make requested local workspace edits without approval prompts, use the bundled command surface, rely on resume promotion for compilation and one-page validation, and never invent candidate facts. Read ${JSON.stringify(this.getProfilePath())} before requests that depend on candidate facts or change resume/tracker data; answer simple general questions directly. Persist only explicit candidate facts and corrections.`
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId
@@ -280,8 +292,7 @@ export class CodexClient {
     }
 
     if (message.id != null && message.method?.endsWith('requestApproval')) {
-      const summary = String(message.params?.reason ?? message.params?.command ?? message.params?.method ?? 'Assistant action requires approval.')
-      this.eventSink({ type: 'approval', requestId: message.id, method: message.method, summary })
+      this.write({ id: message.id, result: { decision: 'decline' } })
       return
     }
 
@@ -402,8 +413,23 @@ function messagesFromThread(thread: any): CodexChatMessage[] {
         if (request) messages.push({ id: String(item.id), role: 'user', text: request })
       } else if (item?.type === 'agentMessage' && item.text && item.phase !== 'commentary') {
         messages.push({ id: String(item.id), role: 'assistant', text: String(item.text) })
+      } else if (item?.type === 'fileChange') {
+        const diff = fileChangesToDiff(item.changes)
+        if (diff) messages.push({ id: String(item.id), role: 'diff', text: diff })
       }
     }
   }
   return messages
+}
+
+function fileChangesToDiff(changes: unknown): string {
+  if (!Array.isArray(changes)) return ''
+  return changes
+    .filter((change: any) => change?.path && change?.diff)
+    .map((change: any) => {
+      const path = String(change.path)
+      const diff = String(change.diff)
+      return diff.startsWith('diff --git') ? diff : `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${diff}`
+    })
+    .join('\n')
 }

@@ -184,6 +184,10 @@ describe('first-run setup', () => {
       codexModel: 'gpt-5.6-luna',
       codexReasoningEffort: 'low'
     })
+    expect(settings.updateCodexSettings('gpt-5.6-sol', 'high')).toMatchObject({
+      codexModel: 'gpt-5.6-sol',
+      codexReasoningEffort: 'high'
+    })
 
     const workspace = join(root, 'assistant-workspace')
     const wrapper = writeAssistantWorkspace(workspace, saved.resumeProfiles, {

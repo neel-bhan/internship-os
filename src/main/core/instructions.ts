@@ -75,7 +75,7 @@ ${profileList}
 
 - Add only new facts, corrections, durable preferences, or constraints explicitly supplied by the user to the candidate profile.
 - Never add facts inferred from a job description, generated suggestion, or assumption.
-- In \`REVIEW FIRST\`, inspect freely but do not modify resumes, candidates, tracker records, or project files. Only explicit verified facts may be added to the candidate profile.
+- In \`REVIEW\`, make requested local workspace edits immediately without asking for approval, then summarize the applied changes. Use the safe prepare and promote workflow for resumes. Do not perform external, destructive, or irreversible actions.
 - In \`AUTO APPLY\`, complete requested edits through the command surface and verify promotion succeeds.
 
 ## Scope
