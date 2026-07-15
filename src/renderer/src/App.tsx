@@ -282,7 +282,7 @@ function leadingColumns(line: string): number {
 export default function App(): React.JSX.Element {
   const [view, setView] = useState<View>('resume')
   const [theme, setTheme] = useState<Theme>(initialTheme)
-  const [agentOpen, setAgentOpen] = useState(false)
+  const [agentExpanded, setAgentExpanded] = useState(false)
   const [applications, setApplications] = useState<InternshipApplication[]>([])
   const [editing, setEditing] = useState<ApplicationInput | null>(null)
   const [resume, setResume] = useState<ResumeState | null>(null)
@@ -294,6 +294,8 @@ export default function App(): React.JSX.Element {
   const [codexBusy, setCodexBusy] = useState(false)
   const [draftDialogOpen, setDraftDialogOpen] = useState(false)
   const [draftName, setDraftName] = useState('')
+  const [draftProfileId, setDraftProfileId] = useState('general-swe')
+  const codexInputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -327,28 +329,24 @@ export default function App(): React.JSX.Element {
       } else if (command && event.key === '1') {
         event.preventDefault()
         setView('resume')
-        setAgentOpen(false)
       } else if (command && event.key === '2') {
         event.preventDefault()
         setView('tracker')
-        setAgentOpen(false)
       } else if (command && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setAgentOpen((open) => !open)
-      } else if (event.key === 'Escape' && agentOpen) {
+        setAgentExpanded(true)
+        window.setTimeout(() => codexInputRef.current?.focus(), 0)
+      } else if (event.key === 'Escape' && agentExpanded) {
         event.preventDefault()
-        setAgentOpen(false)
-      } else if (command && event.key.toLowerCase() === 's' && view === 'resume' && !agentOpen) {
+        setAgentExpanded(false)
+      } else if (command && event.key.toLowerCase() === 's' && view === 'resume') {
         event.preventDefault()
         void resumeAction('save')
-      } else if (command && event.key === 'Enter' && agentOpen && message.trim() && !codexBusy) {
-        event.preventDefault()
-        void sendMessage()
       }
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [agentOpen, codexBusy, draftDialogOpen, message, view, source])
+  }, [agentExpanded, draftDialogOpen, view, source])
 
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
@@ -456,6 +454,7 @@ export default function App(): React.JSX.Element {
     if (!resume) return
     if (source !== resume.source && !confirm('Create the draft from the last saved template and discard unsaved editor changes?')) return
     setDraftName('')
+    setDraftProfileId(resume.activeProfileId)
     setDraftDialogOpen(true)
   }
 
@@ -466,7 +465,7 @@ export default function App(): React.JSX.Element {
 
     setBusy(true)
     try {
-      const state = await window.internshipOS.resume.createJobDraft(name)
+      const state = await window.internshipOS.resume.createJobDraft(name, draftProfileId)
       setResume(state)
       setSource(state.source)
       setDraftDialogOpen(false)
@@ -514,6 +513,7 @@ export default function App(): React.JSX.Element {
     setMessage('')
     setChat((items) => [...items, { id: crypto.randomUUID(), role: 'user', text }])
     setCodexBusy(true)
+    setAgentExpanded(true)
     try {
       await window.internshipOS.codex.send(text)
     } catch (error) {
@@ -553,15 +553,12 @@ export default function App(): React.JSX.Element {
       <main className="workspace">
         <div className="global-toolbar" aria-label="Application controls">
           <WorkspaceActions
-            current={agentOpen ? 'agent' : view}
-            onResume={() => { setView('resume'); setAgentOpen(false) }}
-            onTracker={() => { setView('tracker'); setAgentOpen(false) }}
-            onCodex={() => setAgentOpen(true)}
+            current={view}
+            onResume={() => setView('resume')}
+            onTracker={() => setView('tracker')}
           />
           <span className="toolbar-divider" />
-          {agentOpen ? (
-            <div className="toolbar-title"><strong>Codex Agent</strong><span>Local workspace</span></div>
-          ) : view === 'resume' ? (
+          {view === 'resume' ? (
             <>
             <details
               className={`profile-menu ${busy || !resume ? 'disabled' : ''}`}
@@ -597,51 +594,46 @@ export default function App(): React.JSX.Element {
                 ))}
               </div>
             </details>
+            <details
+              className={`job-draft-menu ${busy || !resume ? 'disabled' : ''}`}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open')
+              }}
+            >
+              <summary title="Open or create a temporary job-specific resume">
+                {resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : resume?.jobDraft.drafts.length ? `Drafts (${resume.jobDraft.drafts.length})` : 'Drafts'}
+              </summary>
+              <div className="job-draft-menu-options">
+                <button
+                  className="new-draft-option"
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open')
+                    openJobDraftDialog()
+                  }}
+                ><span>＋</span>New Draft…</button>
+                {resume?.jobDraft.drafts.map((draft) => (
+                  <div className="draft-option-row" key={draft.id}>
+                    <button
+                      className={`draft-option-select ${draft.id === resume.jobDraft.id ? 'selected' : ''}`}
+                      onClick={(event) => {
+                        event.currentTarget.closest('details')?.removeAttribute('open')
+                        void selectJobDraft(draft.id)
+                      }}
+                    ><span>{draft.id === resume.jobDraft.id ? '✓' : ''}</span><span>{draft.name}</span></button>
+                    <button className="draft-option-delete" aria-label={`Delete ${draft.name} draft`} title={`Delete ${draft.name} draft`} onClick={() => void discardJobDraft(draft.id, draft.name)}>×</button>
+                  </div>
+                ))}
+              </div>
+            </details>
+            {resume?.jobDraft.active && <button className="stop-draft-action" onClick={() => void selectJobDraft(null)} disabled={busy}>Stop Draft</button>}
             </>
           ) : (
             <div className="toolbar-title"><strong>Applications</strong><span>{stats.total} total · {stats.submitted} submitted</span></div>
           )}
           <div className="toolbar-drag-space" />
           <div className="context-actions">
-            {!agentOpen && view === 'resume' ? (
+            {view === 'resume' ? (
               <>
-                <details
-                  className={`job-draft-menu ${busy || !resume ? 'disabled' : ''}`}
-                  onBlur={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open')
-                  }}
-                >
-                  <summary title="Open or create a temporary job-specific resume">
-                    {resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : resume?.jobDraft.drafts.length ? `Drafts (${resume.jobDraft.drafts.length})` : 'Drafts'}
-                  </summary>
-                  <div className="job-draft-menu-options">
-                    <button
-                      className="new-draft-option"
-                      onClick={(event) => {
-                        event.currentTarget.closest('details')?.removeAttribute('open')
-                        openJobDraftDialog()
-                      }}
-                    ><span>＋</span>New Draft…</button>
-                    {resume?.jobDraft.drafts.map((draft) => (
-                      <div className="draft-option-row" key={draft.id}>
-                        <button
-                          className={`draft-option-select ${draft.id === resume.jobDraft.id ? 'selected' : ''}`}
-                          onClick={(event) => {
-                            event.currentTarget.closest('details')?.removeAttribute('open')
-                            void selectJobDraft(draft.id)
-                          }}
-                        ><span>{draft.id === resume.jobDraft.id ? '✓' : ''}</span><span>{draft.name}</span></button>
-                        <button
-                          className="draft-option-delete"
-                          aria-label={`Delete ${draft.name} draft`}
-                          title={`Delete ${draft.name} draft`}
-                          onClick={() => void discardJobDraft(draft.id, draft.name)}
-                        >×</button>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-                {resume?.jobDraft.active && <button className="stop-draft-action" onClick={() => void selectJobDraft(null)} disabled={busy}>Stop Draft</button>}
                 <button onClick={() => void resumeAction('undo')} disabled={busy}>Undo</button>
                 <button onClick={() => void window.internshipOS.resume.openPdf()} disabled={!resume?.hasPdf} title="Open current PDF">PDF</button>
                 <button className="primary" onClick={() => void resumeAction('save')} disabled={busy}>Save & Compile</button>
@@ -654,9 +646,9 @@ export default function App(): React.JSX.Element {
                   </div>
                 </details>
               </>
-            ) : !agentOpen ? (
+            ) : (
               <button className="primary" onClick={() => setEditing({ ...emptyApplication })}>+ Add application</button>
-            ) : null}
+            )}
           </div>
           <button
             className="theme-toggle"
@@ -699,7 +691,12 @@ export default function App(): React.JSX.Element {
                   onChange={(event) => setDraftName(event.target.value)}
                 />
               </label>
-              <div className="draft-starting-point"><span>Starting from</span><strong>{resume.profileName}</strong></div>
+              <label>
+                Starting template
+                <select value={draftProfileId} onChange={(event) => setDraftProfileId(event.target.value)}>
+                  {resume.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                </select>
+              </label>
               <div className="draft-dialog-actions">
                 <button type="button" onClick={() => setDraftDialogOpen(false)}>Cancel</button>
                 <button className="primary" type="submit" disabled={busy || !draftName.trim()}>Create Draft</button>
@@ -708,20 +705,7 @@ export default function App(): React.JSX.Element {
           </div>
         )}
         <section className="primary-panel">
-          {agentOpen ? (
-            <AgentWorkspace
-              state={codexState}
-              items={chat}
-              value={message}
-              busy={codexBusy}
-              onValueChange={setMessage}
-              onSend={() => void sendMessage()}
-              onEditModeChange={(mode) => void changeEditMode(mode)}
-              onOpenProfile={() => void window.internshipOS.codex.openProfile().catch(showError)}
-              onReconnect={() => void window.internshipOS.codex.connect().then(setCodexState).catch(showError)}
-              onApproval={(itemId, requestId, decision) => void decideApproval(itemId, requestId, decision)}
-            />
-          ) : view === 'tracker' ? (
+          {view === 'tracker' ? (
             <Tracker
               applications={applications}
               editing={editing}
@@ -739,6 +723,22 @@ export default function App(): React.JSX.Element {
             />
           )}
         </section>
+        <CodexDock
+          inputRef={codexInputRef}
+          expanded={agentExpanded}
+          context={view === 'tracker' ? 'Applications' : resume?.jobDraft.active ? `${resume.jobDraft.name} · ${resume.profileName}` : resume?.profileName ?? 'Resume'}
+          state={codexState}
+          items={chat}
+          value={message}
+          busy={codexBusy}
+          onExpandedChange={setAgentExpanded}
+          onValueChange={setMessage}
+          onSend={() => void sendMessage()}
+          onEditModeChange={(mode) => void changeEditMode(mode)}
+          onOpenProfile={() => void window.internshipOS.codex.openProfile().catch(showError)}
+          onReconnect={() => void window.internshipOS.codex.connect().then(setCodexState).catch(showError)}
+          onApproval={(itemId, requestId, decision) => void decideApproval(itemId, requestId, decision)}
+        />
       </main>
     </div>
   )
@@ -1084,10 +1084,9 @@ function ResumeStudio(props: {
 }
 
 function WorkspaceActions(props: {
-  current: View | 'agent'
+  current: View
   onResume: () => void
   onTracker: () => void
-  onCodex: () => void
 }): React.JSX.Element {
   return (
     <div className="workspace-actions" role="navigation" aria-label="Workspace">
@@ -1097,18 +1096,19 @@ function WorkspaceActions(props: {
       <button className={props.current === 'tracker' ? 'active' : ''} onClick={props.onTracker} title="Tracker (⌘2)">
         <Icon name="tracker" /><span>Tracker</span><kbd className="toolbar-shortcut">⌘2</kbd>
       </button>
-      <button className={`codex-action ${props.current === 'agent' ? 'active' : ''}`} onClick={props.onCodex} title="Codex (⌘K)">
-        <Icon name="codex" /><span>Codex</span><kbd className="toolbar-shortcut">⌘K</kbd>
-      </button>
     </div>
   )
 }
 
-function AgentWorkspace(props: {
+function CodexDock(props: {
+  inputRef: React.RefObject<HTMLTextAreaElement | null>
+  expanded: boolean
+  context: string
   state: CodexState | null
   items: ChatItem[]
   value: string
   busy: boolean
+  onExpandedChange: (expanded: boolean) => void
   onValueChange: (value: string) => void
   onSend: () => void
   onEditModeChange: (mode: CodexEditMode) => void
@@ -1116,43 +1116,82 @@ function AgentWorkspace(props: {
   onReconnect: () => void
   onApproval: (itemId: string, requestId: string | number, decision: 'accept' | 'decline') => void
 }): React.JSX.Element {
-  const { state, items, value, busy, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
+  const { inputRef, expanded, context, state, items, value, busy, onExpandedChange, onValueChange, onSend, onEditModeChange, onOpenProfile, onReconnect, onApproval } = props
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [items, busy])
+    if (expanded) endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [items, busy, expanded])
+
+  const mode = state?.editMode ?? 'review'
+  const status = !state?.authenticated ? 'Offline' : busy ? 'Working' : 'Ready'
+
+  function send(): void {
+    if (!value.trim() || busy || !state?.authenticated) return
+    onExpandedChange(true)
+    onSend()
+  }
 
   return (
-    <div className="agent-workspace">
-      <header className="agent-workspace-header">
-        <div className="agent-identity"><span className="agent-mark"><Icon name="codex" /></span><div><strong>Codex</strong><span>Resume and application agent</span></div></div>
-        <div className="agent-header-actions">
-          <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
-          <div className="edit-mode-switch" role="group" aria-label="Codex edit mode">
-            <button disabled={busy} className={(state?.editMode ?? 'review') === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Codex proposes changes but does not apply them">Review First</button>
-            <button disabled={busy} className={state?.editMode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto Apply</button>
+    <div className={`codex-layer ${expanded ? 'expanded' : ''}`}>
+      {expanded && (
+        <section className="codex-overlay" aria-label="Codex conversation">
+          <header className="codex-overlay-header">
+            <div className="agent-identity">
+              <span className="agent-mark"><Icon name="codex" /></span>
+              <div><strong>Codex</strong><span>{context}</span></div>
+            </div>
+            <div className="agent-header-actions">
+              <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
+              <div className="edit-mode-switch" role="group" aria-label="Codex edit mode">
+                <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Codex proposes changes but does not apply them">Review First</button>
+                <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto Apply</button>
+              </div>
+              <span className={`agent-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`}><i />{status}</span>
+              <button className="codex-collapse" aria-label="Collapse Codex" title="Collapse Codex (Esc)" onClick={() => onExpandedChange(false)}>⌄</button>
+            </div>
+          </header>
+          <div className="codex-overlay-feed">
+            <div className="codex-feed-inner">
+              {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
+              {items.map((item) => (
+                <article key={item.id} className={`agent-message ${item.role}`}>
+                  <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
+                  <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
+                </article>
+              ))}
+              {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
+              <div ref={endRef} />
+            </div>
           </div>
-          <span className={`agent-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`}><i />{!state?.authenticated ? 'Offline' : busy ? 'Working' : 'Ready'}</span>
+          {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
+        </section>
+      )}
+      <div className="codex-dock">
+        <button className="codex-dock-toggle" aria-label={expanded ? 'Collapse Codex' : 'Expand Codex'} title={`${expanded ? 'Collapse' : 'Open'} Codex (⌘K)`} onClick={() => onExpandedChange(!expanded)}><Icon name="codex" /></button>
+        <span className="codex-context" title={context}>{context}</span>
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={value}
+          placeholder="Ask Codex…"
+          aria-label="Message Codex"
+          onFocus={() => onExpandedChange(true)}
+          onChange={(event) => onValueChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              send()
+            }
+          }}
+        />
+        <div className="edit-mode-switch compact" role="group" aria-label="Codex edit mode">
+          <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Review changes before applying">Review</button>
+          <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Apply and compile automatically">Auto</button>
         </div>
-      </header>
-      <div className="agent-feed">
-        <div className="agent-feed-inner">
-          {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ready for a task.</p></div>}
-          {items.map((item) => (
-            <article key={item.id} className={`agent-message ${item.role}`}>
-              <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
-              <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
-            </article>
-          ))}
-          {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
-          <div ref={endRef} />
-        </div>
+        <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status} onClick={() => onExpandedChange(true)}><i /></button>
+        <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
       </div>
-      <footer className="agent-composer-area">
-        {!state?.authenticated && <div className="connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
-        <div className="agent-composer"><textarea autoFocus value={value} placeholder="Give Codex a task…" onChange={(event) => onValueChange(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend() } }} /><div className="agent-composer-footer"><span>Enter to send · Shift Enter for a new line</span><button className="send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={onSend}>↑</button></div></div>
-      </footer>
     </div>
   )
 }

@@ -123,8 +123,8 @@ describe('ResumeManager', () => {
     expect(manager.discardJobDraft(googleDraft.jobDraft.id!).jobDraft).toMatchObject({ exists: false, active: false, id: null, name: null })
     expect(manager.getState().source).toContain('Updated line')
 
-    manager.selectProfile('backend')
-    manager.createJobDraft('Stripe')
+    const stripeDraft = manager.createJobDraft('Stripe', 'backend')
+    expect(stripeDraft).toMatchObject({ activeProfileId: 'backend', profileName: 'Backend' })
     const restartedManager = new ResumeManager(paths, defaultSource)
     expect(restartedManager.getState()).toMatchObject({
       activeProfileId: 'backend',

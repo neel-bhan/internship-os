@@ -61,9 +61,15 @@ async function applicationCommand(actionName: string | undefined, values: Record
 }
 
 async function resumeCommand(actionName: string | undefined, values: Record<string, string>): Promise<void> {
+  if (values.profile && actionName !== 'select' && actionName !== 'draft-create') resume.selectProfile(values.profile)
   if (actionName === 'state') return output(resume.getState())
   if (actionName === 'profiles') return output(resume.listProfiles())
   if (actionName === 'select') return output(resume.selectProfile(requireFlag(values, 'profile')))
+  if (actionName === 'draft-list') return output(resume.getState().jobDraft)
+  if (actionName === 'draft-create') return output(resume.createJobDraft(requireFlag(values, 'name'), values.profile))
+  if (actionName === 'draft-select') return output(resume.selectJobDraft(resolveDraftId(values)))
+  if (actionName === 'draft-stop') return output(resume.selectJobDraft(null))
+  if (actionName === 'draft-delete') return output(resume.discardJobDraft(resolveDraftId(values)))
   if (actionName === 'prepare') return output({ candidatePath: resume.prepareCandidate() })
   if (actionName === 'promote') {
     const path = resolve(requireFlag(values, 'path'))
@@ -73,6 +79,15 @@ async function resumeCommand(actionName: string | undefined, values: Record<stri
   if (actionName === 'undo') return output(resume.undo())
   if (actionName === 'archive') return output({ archivePath: resume.archiveManual() })
   usage()
+}
+
+function resolveDraftId(values: Record<string, string>): string {
+  if (values.id) return values.id
+  const name = requireFlag(values, 'name').toLowerCase()
+  const matches = resume.getState().jobDraft.drafts.filter((draft) => draft.name.toLowerCase() === name)
+  if (matches.length === 0) throw new Error(`Draft not found: ${values.name}`)
+  if (matches.length > 1) throw new Error(`Multiple drafts are named ${values.name}; use --id.`)
+  return matches[0].id
 }
 
 function parseFlags(tokens: string[]): Record<string, string> {
@@ -117,5 +132,10 @@ function usage(): never {
   npm run ios -- application delete --id ID
   npm run ios -- resume state|profiles|prepare|compile|undo|archive
   npm run ios -- resume select --profile general-swe|backend|full-stack|ai-ml|quant
+  npm run ios -- resume draft-list [--profile PROFILE]
+  npm run ios -- resume draft-create --name NAME [--profile PROFILE]
+  npm run ios -- resume draft-select --name NAME|--id ID [--profile PROFILE]
+  npm run ios -- resume draft-stop [--profile PROFILE]
+  npm run ios -- resume draft-delete --name NAME|--id ID [--profile PROFILE]
   npm run ios -- resume promote --path CANDIDATE_TEX`)
 }

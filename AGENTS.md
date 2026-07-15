@@ -13,6 +13,11 @@ npm run ios -- application update --id "ID" --status "Submitted"
 npm run ios -- resume state
 npm run ios -- resume profiles
 npm run ios -- resume select --profile backend
+npm run ios -- resume draft-list --profile backend
+npm run ios -- resume draft-create --name "Amazon" --profile backend
+npm run ios -- resume draft-select --name "Amazon" --profile backend
+npm run ios -- resume draft-stop --profile backend
+npm run ios -- resume draft-delete --name "Amazon" --profile backend
 npm run ios -- resume prepare
 npm run ios -- resume promote --path "/absolute/candidate.tex"
 npm run ios -- resume undo
@@ -29,6 +34,8 @@ Resume profile IDs are exactly:
 - `quant` — Python, data, algorithms, and reliability
 
 Use `resume state` to inspect the active profile. Select the intended profile before preparing a candidate. Each profile has independent source, PDF, undo history, and compile history. A newly created profile starts as an exact copy of the verified General SWE source; tailor it only from facts already in the resume or supplied by the user.
+
+Job drafts are isolated temporary resumes based on one of the five profiles. Use the draft commands instead of manipulating draft folders directly. Creating or selecting a draft makes it active; `draft-stop` returns to its unchanged base profile without deleting it. The active draft is the resume used by prepare, promote, compile, undo, and application submission archiving.
 
 ## Resume safety
 

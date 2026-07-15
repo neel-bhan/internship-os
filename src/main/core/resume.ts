@@ -139,11 +139,14 @@ export class ResumeManager {
     return this.getState()
   }
 
-  createJobDraft(name: string): ResumeState {
+  createJobDraft(name: string, profileId = this.activeProfileId): ResumeState {
     this.initialize()
     const trimmedName = name.trim()
     if (!trimmedName) throw new Error('Enter a company or job name for this draft.')
     if (trimmedName.length > 80) throw new Error('Job draft names must be 80 characters or fewer.')
+    if (!RESUME_PROFILES.some((profile) => profile.id === profileId)) throw new Error(`Unknown resume profile: ${profileId}`)
+
+    this.activeProfileId = profileId
 
     const draftId = randomUUID()
 

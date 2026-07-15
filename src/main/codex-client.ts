@@ -134,7 +134,7 @@ export class CodexClient {
     const modeInstruction = this.editMode === 'auto'
       ? 'AUTO APPLY mode: complete requested resume and tracker edits end-to-end. For resume changes, use the candidate and promote workflow so compilation and one-page validation happen before promotion.'
       : 'REVIEW FIRST mode: do not modify resumes, candidates, application records, tracker data, or other project files. Inspect freely and return a concrete proposed change. The only file you may update is the durable candidate profile when the user supplies a new verified fact.'
-    const requestText = `[Internship OS persistent context]\nRead ${JSON.stringify(profilePath)} before answering. Treat it as the durable source of verified candidate facts across chats. If this user message contains a new explicit fact, correction, durable preference, or constraint about the candidate, update that profile concisely. Never store claims inferred from a job description, AI output, or assumption. Never weaken or remove an existing fact without an explicit correction.\n\n${modeInstruction}\n\n[User request]\n${text}`
+    const requestText = `[Internship OS persistent context]\nRead ${JSON.stringify(profilePath)} before answering. Treat it as the durable source of verified candidate facts across chats. If this user message contains a new explicit fact, correction, durable preference, or constraint about the candidate, update that profile concisely. Never store claims inferred from a job description, AI output, or assumption. Never weaken or remove an existing fact without an explicit correction. Use the draft-list, draft-create, draft-select, draft-stop, and draft-delete commands documented in AGENTS.md whenever the user asks to manage temporary job drafts.\n\n${modeInstruction}\n\n[User request]\n${text}`
 
     await this.request('turn/start', {
       threadId: this.threadId,
@@ -174,7 +174,7 @@ export class CodexClient {
       personality: 'friendly',
       serviceName: 'internship_os',
       developerInstructions:
-        'Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end in one turn with no progress narration, permission questions, duplicate commands, or extra PDF rendering. Use candidate resume files, rely on resume promote for compilation and one-page validation, and never invent facts. When facts are missing, use clearly labeled TODO placeholders only when that preserves the user’s requested structure; otherwise ask one concise question in normal chat.'
+        'Operate the local Internship OS using AGENTS.md. Complete clear requests end-to-end in one turn with no progress narration, permission questions, duplicate commands, or extra PDF rendering. Use the documented resume draft commands to list, create, select, stop, or delete job drafts when requested. Use candidate resume files, rely on resume promote for compilation and one-page validation, and never invent facts. When facts are missing, use clearly labeled TODO placeholders only when that preserves the user’s requested structure; otherwise ask one concise question in normal chat.'
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId

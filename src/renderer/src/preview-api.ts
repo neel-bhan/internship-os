@@ -63,9 +63,10 @@ export function installBrowserPreviewApi(): void {
         }
         return resume
       },
-      createJobDraft: async (name: string) => {
+      createJobDraft: async (name: string, profileId?: string) => {
+        const profile = RESUME_PROFILES.find((item) => item.id === profileId) ?? RESUME_PROFILES.find((item) => item.id === resume.activeProfileId)!
         const draft = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }
-        resume = { ...resume, jobDraft: { exists: true, active: true, id: draft.id, name, drafts: [draft, ...resume.jobDraft.drafts] } }
+        resume = { ...resume, activeProfileId: profile.id, profileName: profile.name, jobDraft: { exists: true, active: true, id: draft.id, name, drafts: [draft, ...resume.jobDraft.drafts] } }
         return resume
       },
       selectJobDraft: async (draftId: string | null) => {

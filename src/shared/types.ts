@@ -122,7 +122,7 @@ export interface InternshipOsApi {
     get(): Promise<ResumeState>
     readPdf(): Promise<ArrayBuffer | null>
     selectProfile(profileId: string): Promise<ResumeState>
-    createJobDraft(name: string): Promise<ResumeState>
+    createJobDraft(name: string, profileId?: string): Promise<ResumeState>
     selectJobDraft(draftId: string | null): Promise<ResumeState>
     discardJobDraft(draftId: string): Promise<ResumeState>
     saveAndCompile(source: string): Promise<ResumeState>
