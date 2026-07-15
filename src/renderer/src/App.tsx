@@ -1123,6 +1123,10 @@ function CodexDock(props: {
     if (expanded) endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
   }, [items, busy, expanded])
 
+  useEffect(() => {
+    if (expanded) window.setTimeout(() => inputRef.current?.focus(), 0)
+  }, [expanded, inputRef])
+
   const mode = state?.editMode ?? 'review'
   const status = !state?.authenticated ? 'Offline' : busy ? 'Working' : 'Ready'
 
@@ -1134,8 +1138,15 @@ function CodexDock(props: {
 
   return (
     <div className={`codex-layer ${expanded ? 'expanded' : ''}`}>
-      {expanded && (
-        <section className="codex-overlay" aria-label="Codex conversation">
+      {!expanded ? (
+        <button className="codex-fab" aria-label="Open Codex" title="Open Codex (⌘K)" onClick={() => onExpandedChange(true)}>
+          <span className="agent-mark"><Icon name="codex" /></span>
+          <span>Codex</span>
+          <kbd>⌘K</kbd>
+          <i className={!state?.authenticated ? 'offline' : busy ? 'working' : ''} />
+        </button>
+      ) : (
+        <section className="codex-float" aria-label="Codex conversation">
           <header className="codex-overlay-header">
             <div className="agent-identity">
               <span className="agent-mark"><Icon name="codex" /></span>
@@ -1143,55 +1154,49 @@ function CodexDock(props: {
             </div>
             <div className="agent-header-actions">
               <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
-              <div className="edit-mode-switch" role="group" aria-label="Codex edit mode">
-                <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Codex proposes changes but does not apply them">Review First</button>
-                <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto Apply</button>
+              <div className="edit-mode-switch compact" role="group" aria-label="Codex edit mode">
+                <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Codex proposes changes but does not apply them">Review</button>
+                <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Codex applies requested changes and compiles automatically">Auto</button>
               </div>
-              <span className={`agent-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`}><i />{status}</span>
-              <button className="codex-collapse" aria-label="Collapse Codex" title="Collapse Codex (Esc)" onClick={() => onExpandedChange(false)}>⌄</button>
+              <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status}><i /></button>
+              <button className="codex-collapse" aria-label="Close Codex" title="Close Codex (Esc)" onClick={() => onExpandedChange(false)}>×</button>
             </div>
           </header>
-          <div className="codex-overlay-feed">
-            <div className="codex-feed-inner">
-              {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
-              {items.map((item) => (
-                <article key={item.id} className={`agent-message ${item.role}`}>
-                  <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
-                  <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
-                </article>
-              ))}
-              {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
-              <div ref={endRef} />
+          <div className="codex-float-body">
+            <div className="codex-overlay-feed">
+              <div className="codex-feed-inner">
+                {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask Codex to tailor this resume or manage an application.</p></div>}
+                {items.map((item) => (
+                  <article key={item.id} className={`agent-message ${item.role}`}>
+                    <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Codex' : 'Activity'}</div>
+                    <div className="agent-message-body"><p>{item.text}</p>{item.approval && <div className="approval-actions"><button onClick={() => onApproval(item.id, item.approval!.requestId, 'decline')}>Decline</button><button className="primary" onClick={() => onApproval(item.id, item.approval!.requestId, 'accept')}>Allow</button></div>}</div>
+                  </article>
+                ))}
+                {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
+                <div ref={endRef} />
+              </div>
             </div>
+            {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
           </div>
-          {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? 'Codex login is required.'}</p><button onClick={onReconnect}>Reconnect</button></div>}
+          <footer className="codex-float-composer">
+            <textarea
+              ref={inputRef}
+              rows={2}
+              value={value}
+              placeholder="Ask Codex…"
+              aria-label="Message Codex"
+              onChange={(event) => onValueChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  send()
+                }
+              }}
+            />
+            <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
+          </footer>
         </section>
       )}
-      <div className="codex-dock">
-        <button className="codex-dock-toggle" aria-label={expanded ? 'Collapse Codex' : 'Expand Codex'} title={`${expanded ? 'Collapse' : 'Open'} Codex (⌘K)`} onClick={() => onExpandedChange(!expanded)}><Icon name="codex" /></button>
-        <span className="codex-context" title={context}>{context}</span>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={value}
-          placeholder="Ask Codex…"
-          aria-label="Message Codex"
-          onFocus={() => onExpandedChange(true)}
-          onChange={(event) => onValueChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              send()
-            }
-          }}
-        />
-        <div className="edit-mode-switch compact" role="group" aria-label="Codex edit mode">
-          <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Review changes before applying">Review</button>
-          <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Apply and compile automatically">Auto</button>
-        </div>
-        <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status} onClick={() => onExpandedChange(true)}><i /></button>
-        <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
-      </div>
     </div>
   )
 }
