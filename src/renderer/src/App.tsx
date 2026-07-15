@@ -1360,6 +1360,18 @@ function CodexLauncher(props: {
             }}
           />
           <kbd>⌥Space</kbd>
+          <button
+            className="codex-history-button"
+            aria-label="Previous chats"
+            title="Previous chats"
+            disabled={busy || historyBusy}
+            onClick={() => {
+              onStageChange('conversation')
+              onToggleHistory()
+            }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6M12 7.5V12l3 1.8" /></svg>
+          </button>
           <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`Codex is ${status}`} title={status} onClick={() => onStageChange('conversation')}><i /></button>
           <button className="codex-quick-close" aria-label="Hide Codex" title="Hide Codex (Esc)" onClick={() => onStageChange('hidden')}>×</button>
           <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
