@@ -24,7 +24,9 @@ import {
   type OnboardingState,
   type ResumeProfile,
   type ResumeChangeReview,
-  type ResumeState
+  type ResumeState,
+  type SettingsInput,
+  type ToolCheck
 } from '../../shared/types'
 
 pdfjs.GlobalWorkerOptions.workerPort = new PdfJsWorker()
@@ -300,7 +302,7 @@ export default function App(): React.JSX.Element {
   if (!onboarding.settings.onboardingComplete) {
     return <Onboarding initial={onboarding} onComplete={setOnboarding} />
   }
-  return <MainApp />
+  return <MainApp initialSettings={onboarding} onSettingsChanged={setOnboarding} />
 }
 
 function Onboarding({ initial, onComplete }: { initial: OnboardingState; onComplete: (state: OnboardingState) => void }): React.JSX.Element {
@@ -416,7 +418,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function MainApp(): React.JSX.Element {
+function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: OnboardingState; onSettingsChanged: (state: OnboardingState) => void }): React.JSX.Element {
   const [view, setView] = useState<View>('resume')
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [agentStage, setAgentStage] = useState<AgentStage>('hidden')
@@ -434,6 +436,9 @@ function MainApp(): React.JSX.Element {
   const [historyBusy, setHistoryBusy] = useState(false)
   const [statsOpen, setStatsOpen] = useState(false)
   const [draftDialogOpen, setDraftDialogOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsState, setSettingsState] = useState(initialSettings)
+  const [settingsLoading, setSettingsLoading] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [draftProfileId, setDraftProfileId] = useState('general-swe')
   const codexInputRef = useRef<HTMLTextAreaElement>(null)
@@ -747,6 +752,32 @@ function MainApp(): React.JSX.Element {
     }
   }
 
+  async function openSettings(): Promise<void> {
+    setSettingsLoading(true)
+    try {
+      setSettingsState(await window.internshipOS.settings.get())
+      setSettingsOpen(true)
+    } catch (error) {
+      showError(error)
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
+  async function handleSettingsSaved(state: OnboardingState): Promise<void> {
+    const providerChanged = settingsState.settings.assistantProvider !== state.settings.assistantProvider
+    setSettingsState(state)
+    onSettingsChanged(state)
+    setSettingsOpen(false)
+    await refresh()
+    if (providerChanged) {
+      setChat([])
+      setChatHistory([])
+      setAgentStage('hidden')
+    }
+    setCodexState(await window.internshipOS.codex.connect())
+  }
+
   function showError(error: unknown): void {
     console.error(error)
   }
@@ -866,6 +897,15 @@ function MainApp(): React.JSX.Element {
             )}
           </div>
           <button
+            className="settings-button"
+            aria-label="Open settings"
+            title="Settings"
+            disabled={settingsLoading}
+            onClick={() => void openSettings()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></svg>
+          </button>
+          <button
             className="theme-toggle"
             aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
@@ -919,6 +959,13 @@ function MainApp(): React.JSX.Element {
             </form>
           </div>
         )}
+        {settingsOpen && (
+          <SettingsDialog
+            initial={settingsState}
+            onClose={() => setSettingsOpen(false)}
+            onSaved={(state) => void handleSettingsSaved(state).catch(showError)}
+          />
+        )}
         {statsOpen && (
           <div className="stats-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setStatsOpen(false) }}>
             <ApplicationStats applications={applications} onClose={() => setStatsOpen(false)} />
@@ -966,6 +1013,162 @@ function MainApp(): React.JSX.Element {
           onApproval={(itemId, requestId, decision) => void decideApproval(itemId, requestId, decision)}
         />
       </main>
+    </div>
+  )
+}
+
+function SettingsDialog({ initial, onClose, onSaved }: { initial: OnboardingState; onClose: () => void; onSaved: (state: OnboardingState) => void }): React.JSX.Element {
+  const [identity, setIdentity] = useState<CandidateIdentity>(initial.settings.identity)
+  const [exportFilename, setExportFilename] = useState(initial.settings.exportFilename)
+  const [profiles, setProfiles] = useState<ResumeProfile[]>(initial.settings.resumeProfiles)
+  const [provider, setProvider] = useState<AssistantProviderId>(initial.settings.assistantProvider)
+  const [editMode, setEditMode] = useState<CodexEditMode>(initial.settings.editMode)
+  const [tools, setTools] = useState<ToolCheck[]>(initial.tools)
+  const [customName, setCustomName] = useState('')
+  const [customFocus, setCustomFocus] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !busy) onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [busy, onClose])
+
+  function addProfile(profile?: ResumeProfile): void {
+    const name = profile?.name ?? customName.trim()
+    const focus = profile?.focus ?? (customFocus.trim() || `${name} roles`)
+    const id = profile?.id ?? name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)
+    if (!name || !id || profiles.some((item) => item.id === id)) {
+      setError('That resume format already exists.')
+      return
+    }
+    setProfiles((current) => [...current, { id, name, focus }])
+    setCustomName('')
+    setCustomFocus('')
+    setError(null)
+  }
+
+  function removeProfile(profile: ResumeProfile): void {
+    if (profiles.length === 1) {
+      setError('Keep at least one resume format.')
+      return
+    }
+    if (!confirm(`Remove ${profile.name} from the workspace? Its files will stay on this Mac and return if you add it again.`)) return
+    setProfiles((current) => current.filter((item) => item.id !== profile.id))
+    setError(null)
+  }
+
+  async function refreshTools(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      setTools(await window.internshipOS.settings.refreshTools())
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function openAssistantSetup(): Promise<void> {
+    if (provider === 'none') return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.internshipOS.settings.openAssistantSetup(provider)
+    } catch (reason) {
+      setError(errorText(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function save(): Promise<void> {
+    if (!identity.fullName.trim()) {
+      setError('Name is required.')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const input: SettingsInput = { identity, exportFilename, resumeProfiles: profiles, assistantProvider: provider, editMode }
+      onSaved(await window.internshipOS.settings.save(input))
+    } catch (reason) {
+      setError(errorText(reason))
+      setBusy(false)
+    }
+  }
+
+  const selectedTool = tools.find((tool) => tool.id === provider)
+  const availableDefaults = DEFAULT_RESUME_PROFILES.filter((profile) => !profiles.some((item) => item.id === profile.id))
+
+  return (
+    <div className="settings-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
+      <form className="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" onSubmit={(event) => { event.preventDefault(); void save() }}>
+        <header className="settings-heading">
+          <div><strong id="settings-title">Settings</strong><span>Everything from setup can be changed here.</span></div>
+          <button className="settings-close" type="button" aria-label="Close settings" onClick={onClose} disabled={busy}>×</button>
+        </header>
+        <div className="settings-body">
+          <section className="settings-section">
+            <div className="settings-section-heading"><strong>About you</strong><span>Used in your private candidate profile and new starter resumes.</span></div>
+            <div className="settings-identity-grid">
+              <label className="wide">Full name *<input value={identity.fullName} onChange={(event) => setIdentity({ ...identity, fullName: event.target.value })} /></label>
+              <label>Email<input type="email" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label>
+              <label>Phone<input value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value })} /></label>
+              <label>Portfolio<input value={identity.portfolio} onChange={(event) => setIdentity({ ...identity, portfolio: event.target.value })} /></label>
+              <label>GitHub<input value={identity.github} onChange={(event) => setIdentity({ ...identity, github: event.target.value })} /></label>
+              <label className="wide">LinkedIn<input value={identity.linkedin} onChange={(event) => setIdentity({ ...identity, linkedin: event.target.value })} /></label>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-heading"><strong>Resume export</strong><span>The filename written to Downloads after a successful compile.</span></div>
+            <label className="settings-export">PDF filename<input value={exportFilename} onChange={(event) => setExportFilename(event.target.value)} placeholder="Your_Name_Resume.pdf" /></label>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-heading"><strong>Resume formats</strong><span>Each format keeps separate source, PDF, drafts, compile history, and undo.</span></div>
+            <div className="settings-profile-list">
+              {profiles.map((profile, index) => (
+                <div className="settings-profile-row" key={profile.id}>
+                  <input aria-label={`${profile.name} format name`} value={profile.name} onChange={(event) => setProfiles((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />
+                  <input aria-label={`${profile.name} focus`} value={profile.focus} onChange={(event) => setProfiles((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, focus: event.target.value } : item))} />
+                  <button type="button" onClick={() => removeProfile(profile)}>Remove</button>
+                </div>
+              ))}
+            </div>
+            {availableDefaults.length > 0 && <div className="settings-quick-add"><span>Quick add</span>{availableDefaults.map((profile) => <button type="button" key={profile.id} onClick={() => addProfile(profile)}>+ {profile.name}</button>)}</div>}
+            <div className="settings-add-profile">
+              <input placeholder="Format name, e.g. Security" value={customName} onChange={(event) => setCustomName(event.target.value)} />
+              <input placeholder="Focus, e.g. security engineering roles" value={customFocus} onChange={(event) => setCustomFocus(event.target.value)} />
+              <button type="button" onClick={() => addProfile()} disabled={!customName.trim()}>Add format</button>
+            </div>
+            <p className="settings-note">Removing a format hides it but does not delete its local files.</p>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-heading"><strong>Assistant</strong><span>Choose the local assistant and how much it can change.</span></div>
+            <div className="settings-provider-grid">
+              {(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => {
+                const tool = tools.find((item) => item.id === id)
+                const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'
+                return <button type="button" key={id} className={provider === id ? 'selected' : ''} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Resume and tracker only' : tool?.message ?? 'Not checked'}</span></button>
+              })}
+            </div>
+            {provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="settings-setup-row"><span>{selectedTool.message}</span><button type="button" onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button type="button" onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}
+            <div className="settings-mode">
+              <button type="button" className={editMode === 'review' ? 'selected' : ''} onClick={() => setEditMode('review')}><strong>Review first</strong><span>Propose changes without editing managed data.</span></button>
+              <button type="button" className={editMode === 'auto' ? 'selected' : ''} onClick={() => setEditMode('auto')}><strong>Auto apply</strong><span>Make and verify requested local edits.</span></button>
+            </div>
+          </section>
+          {error && <div className="settings-error" role="alert">{error}</div>}
+        </div>
+        <footer className="settings-actions"><button type="button" onClick={onClose} disabled={busy}>Cancel</button><button className="primary" type="submit" disabled={busy || !identity.fullName.trim() || profiles.length === 0}>{busy ? 'Saving…' : 'Save settings'}</button></footer>
+      </form>
     </div>
   )
 }

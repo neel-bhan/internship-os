@@ -9,6 +9,12 @@ const api: InternshipOsApi = {
     openAssistantSetup: (provider) => ipcRenderer.invoke('onboarding:open-assistant-setup', provider),
     complete: (input) => ipcRenderer.invoke('onboarding:complete', input)
   },
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get'),
+    save: (input) => ipcRenderer.invoke('settings:save', input),
+    refreshTools: () => ipcRenderer.invoke('onboarding:refresh-tools'),
+    openAssistantSetup: (provider) => ipcRenderer.invoke('onboarding:open-assistant-setup', provider)
+  },
   applications: {
     list: () => ipcRenderer.invoke('applications:list'),
     save: (input: ApplicationInput) => ipcRenderer.invoke('applications:save', input),

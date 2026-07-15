@@ -5,6 +5,7 @@ Internship OS is a local-first internship application manager. Keep changes focu
 ## Development commands
 
 ```bash
+npm run setup
 npm run dev
 npm run dev:fresh
 npm test
@@ -12,6 +13,8 @@ npm run build
 npm run ios -- application list
 npm run ios -- resume state
 ```
+
+`npm run setup` is the supported first-run path for repository testers. It installs dependencies, downloads the pinned repository-local TinyTeX pdfLaTeX toolchain into ignored `.tools/`, verifies its checksum, and compiles the generic starter resume. Do not require a global LaTeX installation or rewrite resume sources for another TeX engine.
 
 Never edit the SQLite database or managed resume folders directly. Use the CLI command surface for runtime data operations.
 

@@ -4,12 +4,12 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ApplicationInput, AssistantProviderId, CodexEditMode, OnboardingInput, ToolCheck } from '../shared/types'
+import type { ApplicationInput, AssistantProviderId, CodexEditMode, OnboardingInput, SettingsInput, ToolCheck } from '../shared/types'
 import { ApplicationStore } from './core/database'
 import { AppPaths } from './core/paths'
 import { ResumeManager } from './core/resume'
 import { SettingsStore } from './core/settings'
-import { createCandidateProfile, createStarterResume } from './core/templates'
+import { createCandidateProfile, createStarterResume, updateCandidateProfile } from './core/templates'
 import { writeAssistantWorkspace } from './core/instructions'
 import { createAssistantClient, type AssistantClient } from './assistant-client'
 
@@ -18,6 +18,8 @@ const configuredRoot = process.env.INTERNSHIP_OS_HOME
 const canonicalRoot = join(app.getPath('appData'), 'Internship OS')
 const splitLegacyRoot = join(app.getPath('appData'), 'internship-application-os')
 const dataRoot = configuredRoot ?? (existsSync(canonicalRoot) ? canonicalRoot : existsSync(splitLegacyRoot) ? splitLegacyRoot : canonicalRoot)
+const repositoryTexBin = join(app.getAppPath(), '.tools', 'tinytex', 'TinyTeX', 'bin', 'universal-darwin')
+if (!process.env.INTERNSHIP_OS_TEX_BIN && existsSync(join(repositoryTexBin, 'latexmk'))) process.env.INTERNSHIP_OS_TEX_BIN = repositoryTexBin
 app.setPath('userData', dataRoot)
 
 let mainWindow: BrowserWindow | null = null
@@ -90,7 +92,8 @@ function initializeRuntime(seedSource?: string): void {
     cliPath,
     appRoot: paths.root,
     downloadsRoot,
-    defaultResumePath: defaultSource
+    defaultResumePath: defaultSource,
+    texBinPath: process.env.INTERNSHIP_OS_TEX_BIN
   })
 
   store = new ApplicationStore(paths.database)
@@ -128,6 +131,8 @@ function registerIpc(): void {
     initializeRuntime(wasComplete ? undefined : source)
     return { settings, tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }
   })
+  ipcMain.handle('settings:get', () => ({ settings: settingsStore.get(), tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }))
+  ipcMain.handle('settings:save', (_event, input: SettingsInput) => saveUserSettings(input))
 
   ipcMain.handle('applications:list', () => requireStore().list())
   ipcMain.handle('applications:save', async (_event, input: ApplicationInput) => {
@@ -185,6 +190,33 @@ function registerIpc(): void {
   ipcMain.handle('codex:respond-approval', (_event, requestId: string | number, decision: 'accept' | 'decline') => requireAssistant().respondToApproval(requestId, decision))
 }
 
+function saveUserSettings(input: SettingsInput): { settings: ReturnType<SettingsStore['get']>; tools: ToolCheck[]; legacyDataDetected: boolean } {
+  const previous = settingsStore.get()
+  const activePaths = paths
+  const activeResume = resume
+  const activeState = activeResume?.getState()
+  const baseSource = activePaths && activeState && existsSync(activePaths.sourceFile(activeState.activeProfileId))
+    ? readFileSync(activePaths.sourceFile(activeState.activeProfileId), 'utf8')
+    : null
+  const settings = settingsStore.complete(input)
+
+  if (activePaths && baseSource) {
+    const previousIds = new Set(previous.resumeProfiles.map((profile) => profile.id))
+    for (const profile of settings.resumeProfiles) {
+      if (previousIds.has(profile.id) || existsSync(activePaths.sourceFile(profile.id))) continue
+      mkdirSync(activePaths.profileDir(profile.id), { recursive: true })
+      writeFileSync(activePaths.sourceFile(profile.id), baseSource)
+    }
+  }
+
+  const candidateProfile = join(dataRoot, 'candidate-profile.md')
+  if (existsSync(candidateProfile)) {
+    writeFileSync(candidateProfile, updateCandidateProfile(readFileSync(candidateProfile, 'utf8'), settings.identity, settings.resumeProfiles))
+  }
+  initializeRuntime()
+  return { settings, tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }
+}
+
 function checkTools(): ToolCheck[] {
   return [checkTool('codex'), checkTool('claude'), checkLatex()]
 }
@@ -208,15 +240,21 @@ function checkTool(id: 'codex' | 'claude'): ToolCheck {
 }
 
 function checkLatex(): ToolCheck {
-  for (const command of ['tectonic', 'pdflatex']) {
+  for (const command of ['latexmk', 'pdflatex']) {
     const executable = findExecutable(command)
     if (executable) return { id: 'latex', available: true, executable, version: command, message: `${command} is ready.` }
   }
-  return { id: 'latex', available: false, executable: null, version: null, message: 'Install MacTeX or Tectonic to compile resumes.' }
+  return { id: 'latex', available: false, executable: null, version: null, message: 'Run `npm run setup` to install the local LaTeX toolchain.' }
 }
 
 function findExecutable(command: string): string | null {
-  const direct = command === 'codex' ? '/Applications/Codex.app/Contents/Resources/codex' : command === 'claude' ? join(app.getPath('home'), '.local', 'bin', 'claude') : null
+  const direct = command === 'codex'
+    ? '/Applications/Codex.app/Contents/Resources/codex'
+    : command === 'claude'
+      ? join(app.getPath('home'), '.local', 'bin', 'claude')
+      : command === 'latexmk' || command === 'pdflatex'
+        ? join(process.env.INTERNSHIP_OS_TEX_BIN ?? repositoryTexBin, command)
+        : null
   if (direct && existsSync(direct)) return direct
   const result = spawnSync('/usr/bin/which', [command], { encoding: 'utf8', env: { ...process.env, PATH: `${process.env.PATH ?? ''}:/opt/homebrew/bin:/usr/local/bin:/Library/TeX/texbin` } })
   return result.status === 0 ? result.stdout.trim() || null : null

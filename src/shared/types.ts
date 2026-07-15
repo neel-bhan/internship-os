@@ -92,6 +92,8 @@ export interface OnboardingInput {
   resumeSource?: string
 }
 
+export type SettingsInput = Omit<OnboardingInput, 'resumeSource'>
+
 export interface ResumeState {
   source: string
   sourcePath: string
@@ -187,6 +189,12 @@ export interface InternshipOsApi {
     chooseResumeFile(): Promise<{ name: string; source: string } | null>
     openAssistantSetup(provider: Exclude<AssistantProviderId, 'none'>): Promise<void>
     complete(input: OnboardingInput): Promise<OnboardingState>
+  }
+  settings: {
+    get(): Promise<OnboardingState>
+    save(input: SettingsInput): Promise<OnboardingState>
+    refreshTools(): Promise<ToolCheck[]>
+    openAssistantSetup(provider: Exclude<AssistantProviderId, 'none'>): Promise<void>
   }
   applications: {
     list(): Promise<InternshipApplication[]>

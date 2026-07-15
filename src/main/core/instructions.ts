@@ -5,7 +5,7 @@ import type { ResumeProfile } from '../../shared/types'
 export function writeAssistantWorkspace(
   workspaceRoot: string,
   profiles: ResumeProfile[],
-  runtime: { electronPath: string; cliPath: string; appRoot: string; downloadsRoot: string; defaultResumePath: string }
+  runtime: { electronPath: string; cliPath: string; appRoot: string; downloadsRoot: string; defaultResumePath: string; texBinPath?: string }
 ): string {
   mkdirSync(join(workspaceRoot, 'bin'), { recursive: true })
   const wrapperPath = join(workspaceRoot, 'bin', 'internship-os')
@@ -14,6 +14,7 @@ export ELECTRON_RUN_AS_NODE=1
 export INTERNSHIP_OS_HOME=${shellQuote(runtime.appRoot)}
 export INTERNSHIP_OS_DOWNLOADS=${shellQuote(runtime.downloadsRoot)}
 export INTERNSHIP_OS_DEFAULT_RESUME=${shellQuote(runtime.defaultResumePath)}
+${runtime.texBinPath ? `export INTERNSHIP_OS_TEX_BIN=${shellQuote(runtime.texBinPath)}` : ''}
 exec ${shellQuote(runtime.electronPath)} ${shellQuote(runtime.cliPath)} "$@"
 `
   writeFileSync(wrapperPath, wrapper)

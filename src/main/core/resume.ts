@@ -325,24 +325,27 @@ export class ResumeManager {
   }
 
   private async runCompiler(sourceDir: string, buildDir: string): Promise<CompilerRun> {
-    const latexmk = this.findExecutable('latexmk', ['/Library/TeX/texbin/latexmk'])
-    const pdflatex = this.findExecutable('pdflatex', ['/Library/TeX/texbin/pdflatex'])
+    const localTexBin = process.env.INTERNSHIP_OS_TEX_BIN ?? join(dirname(this.defaultSourcePath), '.tools', 'tinytex', 'TinyTeX', 'bin', 'universal-darwin')
+    const latexmk = this.findExecutable('latexmk', [join(localTexBin, 'latexmk'), '/Library/TeX/texbin/latexmk'])
+    const pdflatex = this.findExecutable('pdflatex', [join(localTexBin, 'pdflatex'), '/Library/TeX/texbin/pdflatex'])
 
     if (!latexmk && !pdflatex) {
       return {
         ok: false,
         compiler: 'none',
-        output: 'No LaTeX compiler found. Install latexmk or pdflatex.',
+        output: 'No LaTeX compiler found. Run `npm run setup` or install latexmk/pdflatex.',
         pdfPath: join(buildDir, 'main.pdf')
       }
     }
 
     if (latexmk) {
-      const output = await this.runProcess(
-        latexmk,
-        ['-pdf', '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', `-outdir=${buildDir}`, 'main.tex'],
-        sourceDir
-      )
+      const args = ['-pdf', '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', `-outdir=${buildDir}`, 'main.tex']
+      let output = await this.runProcess(latexmk, args, sourceDir)
+      for (let attempt = 0; output.code !== 0 && attempt < 3; attempt += 1) {
+        const installed = await this.installMissingLocalPackages(output.text, dirname(latexmk), sourceDir)
+        if (!installed) break
+        output = await this.runProcess(latexmk, args, sourceDir)
+      }
       return {
         ok: output.code === 0 && existsSync(join(buildDir, 'main.pdf')),
         compiler: 'latexmk',
@@ -368,9 +371,31 @@ export class ResumeManager {
     }
   }
 
+  private async installMissingLocalPackages(output: string, compilerDirectory: string, cwd: string): Promise<boolean> {
+    const tlmgr = join(compilerDirectory, 'tlmgr')
+    if (!compilerDirectory.includes(`${join('.tools', 'tinytex')}`) || !existsSync(tlmgr)) return false
+
+    const missingFiles = [...output.matchAll(/File\s+[`']([^`']+\.(?:sty|cls))[`']\s+not found/gi)]
+      .map((match) => match[1])
+      .filter((file, index, files) => files.indexOf(file) === index)
+      .slice(0, 5)
+    if (missingFiles.length === 0) return false
+
+    let installed = false
+    for (const file of missingFiles) {
+      const search = await this.runProcess(tlmgr, ['search', '--global', '--file', `/${file}`], cwd)
+      if (search.code !== 0) continue
+      const packageName = search.text.match(/^([a-zA-Z0-9_.+-]+):\s*$/m)?.[1]
+      if (!packageName) continue
+      const install = await this.runProcess(tlmgr, ['install', packageName], cwd)
+      if (install.code === 0) installed = true
+    }
+    return installed
+  }
+
   private runProcess(command: string, args: string[], cwd: string): Promise<{ code: number; text: string }> {
     return new Promise((resolve) => {
-      const process = spawn(command, args, { cwd, env: processEnv() })
+      const process = spawn(command, args, { cwd, env: processEnv(dirname(command)) })
       let text = ''
       process.stdout.on('data', (chunk) => (text += chunk.toString()))
       process.stderr.on('data', (chunk) => (text += chunk.toString()))
@@ -380,7 +405,7 @@ export class ResumeManager {
   }
 
   private findExecutable(name: string, explicitPaths: string[]): string | null {
-    for (const path of explicitPaths) if (existsSync(path)) return path
+    for (const path of explicitPaths) if (path && existsSync(path)) return path
     const pathDirs = (process.env.PATH ?? '').split(':')
     for (const directory of pathDirs) {
       const candidate = join(directory, name)
@@ -755,10 +780,10 @@ export class ResumeManager {
   }
 }
 
-function processEnv(): NodeJS.ProcessEnv {
+function processEnv(compilerDirectory?: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: `/Library/TeX/texbin:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`
+    PATH: `${compilerDirectory ? `${compilerDirectory}:` : ''}/Library/TeX/texbin:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`
   }
 }
 

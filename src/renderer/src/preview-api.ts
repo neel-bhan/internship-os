@@ -5,12 +5,22 @@ import {
   type CodexState,
   type InternshipApplication,
   type InternshipOsApi,
-  type ResumeState
+  type ResumeState,
+  type UserSettings
 } from '../../shared/types'
 
 export function installBrowserPreviewApi(): void {
   let applications: InternshipApplication[] = []
   const profileSources = new Map(RESUME_PROFILES.map((profile) => [profile.id, resumeSource]))
+  let previewSettings: UserSettings = {
+    version: 1,
+    onboardingComplete: true,
+    identity: { fullName: 'Preview User', email: '', phone: '', portfolio: '', github: '', linkedin: '' },
+    exportFilename: 'Preview_User_Resume.pdf',
+    resumeProfiles: RESUME_PROFILES,
+    assistantProvider: 'codex',
+    editMode: 'review'
+  }
   let resume: ResumeState = {
     source: resumeSource,
     sourcePath: '~/Library/Application Support/Internship OS/resumes/profiles/general-swe/main.tex',
@@ -35,15 +45,7 @@ export function installBrowserPreviewApi(): void {
   window.internshipOS = {
     onboarding: {
       getState: async () => ({
-        settings: {
-          version: 1,
-          onboardingComplete: true,
-          identity: { fullName: 'Preview User', email: '', phone: '', portfolio: '', github: '', linkedin: '' },
-          exportFilename: 'Preview_User_Resume.pdf',
-          resumeProfiles: RESUME_PROFILES,
-          assistantProvider: 'codex',
-          editMode: 'review'
-        },
+        settings: previewSettings,
         tools: [],
         legacyDataDetected: false
       }),
@@ -51,6 +53,29 @@ export function installBrowserPreviewApi(): void {
       chooseResumeFile: async () => null,
       openAssistantSetup: async () => undefined,
       complete: async (input) => ({ settings: { version: 1, onboardingComplete: true, ...input }, tools: [], legacyDataDetected: false })
+    },
+    settings: {
+      get: async () => ({
+        settings: previewSettings,
+        tools: [],
+        legacyDataDetected: false
+      }),
+      save: async (input) => {
+        previewSettings = { version: 1, onboardingComplete: true, ...input }
+        for (const profile of input.resumeProfiles) if (!profileSources.has(profile.id)) profileSources.set(profile.id, resume.source)
+        const activeProfile = input.resumeProfiles.find((profile) => profile.id === resume.activeProfileId) ?? input.resumeProfiles[0]
+        resume = {
+          ...resume,
+          source: profileSources.get(activeProfile.id) ?? resumeSource,
+          activeProfileId: activeProfile.id,
+          profileName: activeProfile.name,
+          profiles: input.resumeProfiles
+        }
+        codex = { ...codex, provider: input.assistantProvider, providerName: input.assistantProvider === 'claude' ? 'Claude' : input.assistantProvider === 'codex' ? 'Codex' : 'No assistant', editMode: input.editMode }
+        return { settings: previewSettings, tools: [], legacyDataDetected: false }
+      },
+      refreshTools: async () => [],
+      openAssistantSetup: async () => undefined
     },
     applications: {
       list: async () => applications,
@@ -66,7 +91,7 @@ export function installBrowserPreviewApi(): void {
       get: async () => resume,
       readPdf: async () => null,
       selectProfile: async (profileId: string) => {
-        const profile = RESUME_PROFILES.find((item) => item.id === profileId)
+        const profile = resume.profiles.find((item) => item.id === profileId)
         if (!profile) throw new Error(`Unknown resume profile: ${profileId}`)
         resume = {
           ...resume,
@@ -83,7 +108,7 @@ export function installBrowserPreviewApi(): void {
         return resume
       },
       createJobDraft: async (name: string, profileId?: string) => {
-        const profile = RESUME_PROFILES.find((item) => item.id === profileId) ?? RESUME_PROFILES.find((item) => item.id === resume.activeProfileId)!
+        const profile = resume.profiles.find((item) => item.id === profileId) ?? resume.profiles.find((item) => item.id === resume.activeProfileId)!
         const draft = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }
         resume = { ...resume, activeProfileId: profile.id, profileName: profile.name, jobDraft: { exists: true, active: true, id: draft.id, name, drafts: [draft, ...resume.jobDraft.drafts] } }
         return resume

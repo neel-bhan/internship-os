@@ -7,6 +7,7 @@ import { AppPaths } from './paths'
 import { ResumeManager } from './resume'
 import { SettingsStore } from './settings'
 import { writeAssistantWorkspace } from './instructions'
+import { createCandidateProfile, updateCandidateProfile } from './templates'
 
 const temporaryRoots: string[] = []
 
@@ -195,6 +196,33 @@ describe('first-run setup', () => {
       [{ id: 'research', name: 'Research', focus: 'Research engineering' }]
     )
     expect(manager.getState()).toMatchObject({ activeProfileId: 'research', profileName: 'Research' })
+  })
+
+  it('updates settings sections without changing verified candidate facts', () => {
+    const original = createCandidateProfile(
+      { fullName: 'First Name', email: 'first@example.com', phone: '', portfolio: '', github: '', linkedin: '' },
+      [{ id: 'general-swe', name: 'General SWE', focus: 'Balanced software engineering' }]
+    ).replace(
+      '- Add verified education, experience, project, skill, preference, and constraint facts here.',
+      '- Built a verified project with TypeScript.\n- Prefers backend internships.'
+    )
+
+    const updated = updateCandidateProfile(
+      original,
+      { fullName: 'Updated Name', email: 'updated@example.com', phone: '555-0100', portfolio: 'example.dev', github: 'github.com/example', linkedin: 'linkedin.com/in/example' },
+      [
+        { id: 'quant', name: 'Quant', focus: 'Algorithms and reliability' },
+        { id: 'security', name: 'Security', focus: 'Security engineering' }
+      ]
+    )
+
+    expect(updated).toContain('# Updated Name — Durable Candidate Profile')
+    expect(updated).toContain('- Email: updated@example.com')
+    expect(updated).toContain('- Quant: Algorithms and reliability')
+    expect(updated).toContain('- Security: Security engineering')
+    expect(updated).toContain('- Built a verified project with TypeScript.')
+    expect(updated).toContain('- Prefers backend internships.')
+    expect(updated).not.toContain('first@example.com')
   })
 })
 

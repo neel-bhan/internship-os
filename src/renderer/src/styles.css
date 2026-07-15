@@ -142,6 +142,41 @@ button { cursor: pointer; }
 .draft-starting-point { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px; border-radius: 9px; color: var(--secondary); background: rgba(128, 128, 128, .09); font-size: 11px; }
 .draft-starting-point strong { color: var(--text); font-weight: 650; }
 .draft-dialog-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.settings-backdrop { position: absolute; z-index: 110; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(12, 12, 14, .55); backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); -webkit-app-region: no-drag; }
+.settings-sheet { width: min(840px, calc(100vw - 48px)); height: min(760px, calc(100vh - 48px)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--pane-bg); box-shadow: 0 28px 90px rgba(0, 0, 0, .42); }
+.settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 20px; border-bottom: 1px solid var(--line); background: var(--pane-header); }
+.settings-heading > div { display: grid; gap: 3px; }
+.settings-heading strong { font-size: 18px; font-weight: 680; letter-spacing: -.02em; }
+.settings-heading span { color: var(--secondary); font-size: 10px; }
+.settings-close { width: 29px; height: 29px; min-height: 0; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; color: var(--secondary); background: rgba(128, 128, 128, .1); box-shadow: none; font-size: 19px; font-weight: 350; }
+.settings-close:hover:not(:disabled) { border: 0; color: var(--text); background: rgba(128, 128, 128, .18); }
+.settings-body { min-height: 0; display: grid; gap: 14px; overflow-y: auto; padding: 18px 20px 24px; }
+.settings-section { display: grid; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--control-bg); }
+.settings-section-heading { display: grid; gap: 3px; }
+.settings-section-heading strong { font-size: 13px; font-weight: 660; }
+.settings-section-heading span, .settings-note { color: var(--secondary); font-size: 9px; line-height: 1.45; }
+.settings-identity-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.settings-identity-grid .wide { grid-column: 1 / -1; }
+.settings-export { max-width: 430px; }
+.settings-profile-list { display: grid; gap: 7px; }
+.settings-profile-row { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(180px, 1.3fr) auto; gap: 7px; }
+.settings-profile-row button { color: #ff6961; }
+.settings-quick-add { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.settings-quick-add > span { margin-right: 3px; color: var(--secondary); font-size: 9px; font-weight: 600; }
+.settings-quick-add button { min-height: 27px; padding: 3px 8px; color: var(--blue); font-size: 9px; }
+.settings-add-profile { display: grid; grid-template-columns: minmax(130px, .75fr) minmax(190px, 1.25fr) auto; gap: 7px; padding-top: 2px; }
+.settings-note { margin: -3px 0 0; }
+.settings-provider-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.settings-provider-grid > button, .settings-mode > button { display: grid; gap: 4px; padding: 11px; text-align: left; }
+.settings-provider-grid > button strong, .settings-mode > button strong { font-size: 11px; }
+.settings-provider-grid > button span, .settings-mode > button span { color: var(--secondary); font-size: 9px; line-height: 1.35; }
+.settings-provider-grid > button.selected, .settings-mode > button.selected { border-color: var(--blue); background: rgba(10, 132, 255, .1); box-shadow: 0 0 0 1px var(--blue) inset; }
+.settings-setup-row { display: flex; align-items: center; gap: 7px; padding: 9px 10px; border-radius: 9px; background: rgba(255, 159, 10, .1); }
+.settings-setup-row > span { min-width: 0; flex: 1; color: var(--secondary); font-size: 9px; }
+.settings-setup-row button { min-height: 27px; padding: 3px 8px; font-size: 9px; }
+.settings-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.settings-error { padding: 10px 12px; border-radius: 9px; color: #ff8a84; background: rgba(255, 69, 58, .12); font-size: 10px; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 13px 20px; border-top: 1px solid var(--line); background: var(--pane-header); }
 .stats-backdrop { position: absolute; z-index: 100; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(25, 25, 28, .22); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); -webkit-app-region: no-drag; }
 .stats-sheet { width: min(900px, calc(100vw - 48px)); display: grid; gap: 18px; padding: 20px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--control-hover); box-shadow: 0 26px 80px rgba(0, 0, 0, .26); }
 .stats-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
@@ -241,8 +276,8 @@ tbody tr:hover { background: rgba(255, 255, 255, .76); }
 .workspace-actions button.codex-action:hover:not(:disabled) { color: #6941a5; background: rgba(175, 126, 235, .12); }
 .workspace-actions button.codex-action.active { color: #fff; background: linear-gradient(135deg, #7b4dc7, #5b64d7); box-shadow: 0 2px 7px rgba(91, 100, 215, .22); }
 .workspace-actions button.codex-action.active .toolbar-shortcut { color: rgba(255, 255, 255, .8); background: rgba(255, 255, 255, .14); }
-.theme-toggle { width: 32px; min-width: 32px; display: grid; place-items: center; padding: 0; }
-.theme-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.settings-button, .theme-toggle { width: 32px; min-width: 32px; display: grid; place-items: center; padding: 0; }
+.settings-button svg, .theme-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .toolbar-divider { align-self: stretch; width: 1px; min-height: 26px; margin: 2px 4px; background: rgba(0, 0, 0, .1); }
 .toolbar-divider.compact { min-height: 22px; margin-left: 1px; margin-right: 1px; }
 .toolbar-more { position: relative; }

@@ -83,6 +83,43 @@ ${profiles.map((profile) => `- ${profile.name}: ${profile.focus}`).join('\n')}
 `
 }
 
+export function updateCandidateProfile(source: string, identity: CandidateIdentity, profiles: ResumeProfile[]): string {
+  let updated = source.replace(
+    /^#\s+.+?\s+[—-]\s+Durable Candidate Profile\s*$/m,
+    `# ${identity.fullName || 'Candidate'} — Durable Candidate Profile`
+  )
+  const identityBlock = `## Identity and links
+
+- Name: ${identity.fullName}
+- Portfolio: ${identity.portfolio}
+- GitHub: ${identity.github}
+- LinkedIn: ${identity.linkedin}
+- Email: ${identity.email}
+- Phone: ${identity.phone}
+`
+  const profileBlock = `## Resume profiles
+
+${profiles.map((profile) => `- ${profile.name}: ${profile.focus}`).join('\n')}
+`
+  const identityPattern = /^## Identity and links[^\n]*\n[\s\S]*?(?=^##\s|(?![\s\S]))/m
+  const profilesPattern = /^## Resume profiles[^\n]*\n[\s\S]*?(?=^##\s|(?![\s\S]))/m
+
+  if (identityPattern.test(updated)) {
+    updated = updated.replace(identityPattern, () => `${identityBlock}\n`)
+  } else {
+    updated = `${updated.trim()}\n\n${identityBlock}`
+  }
+  if (profilesPattern.test(updated)) {
+    updated = updated.replace(profilesPattern, () => `${profileBlock}\n`)
+  } else {
+    const nextSection = updated.indexOf('\n## ', updated.indexOf('## Identity and links') + 3)
+    updated = nextSection >= 0
+      ? `${updated.slice(0, nextSection).trim()}\n\n${profileBlock}\n${updated.slice(nextSection + 1).trimStart()}`
+      : `${updated.trim()}\n\n${profileBlock}`
+  }
+  return `${updated.trim()}\n`
+}
+
 function link(value: string): string {
   const escaped = latexEscape(value)
   const href = /^https?:\/\//i.test(value) ? value : `https://${value}`

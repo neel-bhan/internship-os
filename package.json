@@ -7,6 +7,7 @@
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
     "dev": "electron-vite dev",
     "dev:fresh": "root=$(mktemp -d /tmp/internship-os-fresh.XXXXXX); INTERNSHIP_OS_HOME=\"$root/data\" INTERNSHIP_OS_DOWNLOADS=\"$root/downloads\" electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
@@ -16,6 +17,9 @@
     "test": "ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs run",
     "ios": "ELECTRON_RUN_AS_NODE=1 electron ./node_modules/tsx/dist/cli.mjs src/cli/index.ts",
     "postinstall": "electron-builder install-app-deps"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
