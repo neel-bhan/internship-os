@@ -164,6 +164,9 @@ export function installBrowserPreviewApi(): void {
       newChat: async () => ({ state: (codex = { ...codex, threadId: null }), messages: [] }),
       send: async () => {
         queueMicrotask(() => {
+          codexEventSink({ type: 'activity', activity: { id: 'preview-commentary', kind: 'commentary', title: 'Codex update', text: 'I’m checking the active resume and preparing the requested change.', output: '', status: 'completed' } })
+          codexEventSink({ type: 'activity', activity: { id: 'preview-command', kind: 'command', title: 'Ran command', text: 'internship-os resume prepare', output: 'Prepared candidate source.\nCompiled successfully: 1 page.', detail: '~/Library/Application Support/Internship OS/assistant-workspace', status: 'completed', durationMs: 842, exitCode: 0 } })
+          codexEventSink({ type: 'activity', activity: { id: 'preview-file', kind: 'file', title: 'Changed 1 file', text: 'update resume-candidate/main.tex', output: '', status: 'completed' } })
           codexEventSink({ type: 'diff', text: 'diff --git a/resume.tex b/resume.tex\n--- a/resume.tex\n+++ b/resume.tex\n@@ -12,1 +12,1 @@\n-Old resume bullet\n+Updated resume bullet' })
           codexEventSink({ type: 'message', text: '### Replacement\n\n**AIFA (AI For All)**\n\n- Created AI-focused educational modules and led interactive workshops.\n- Organized hackathons for 200+ students with $2,000+ in prizes.\n\n### Why this works\n\nThe wording is direct and keeps the verified impact visible.' })
           codexEventSink({ type: 'turn-completed' })

@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { delimiter, dirname, join } from 'node:path'
-import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexReasoningEffort, CodexState } from '../shared/types'
+import type { CodexActivity, CodexActivityStatus, CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexReasoningEffort, CodexState } from '../shared/types'
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
@@ -28,6 +28,7 @@ export class CodexClient {
   private error: string | undefined
   private eventSink: EventSink = () => undefined
   private knownThreadIds = new Set<string>()
+  private activeItems = new Map<string, any>()
 
   constructor(
     private readonly projectRoot: string,
@@ -286,33 +287,124 @@ export class CodexClient {
     }
 
     if (message.id != null && message.method?.endsWith('requestApproval')) {
+      this.eventSink({
+        type: 'activity',
+        activity: {
+          id: `approval:${message.id}`,
+          kind: 'system',
+          title: 'Approval request declined',
+          text: formatJson(message.params),
+          output: '',
+          status: 'failed'
+        }
+      })
       this.write({ id: message.id, result: { decision: 'decline' } })
       return
     }
 
     switch (message.method) {
-      case 'item/agentMessage/delta':
+      case 'item/agentMessage/delta': {
+        const id = String(message.params?.itemId ?? '')
+        const item = this.activeItems.get(id)
+        const text = String(message.params?.delta ?? '')
+        if (item?.phase === 'commentary') this.eventSink({ type: 'activity-delta', id, field: 'text', text })
+        else this.eventSink({ type: 'message-delta', id, text })
+        break
+      }
+      case 'item/reasoning/summaryTextDelta':
+      case 'item/plan/delta':
+        this.eventSink({ type: 'activity-delta', id: String(message.params?.itemId ?? ''), field: 'text', text: String(message.params?.delta ?? '') })
         break
       case 'item/commandExecution/outputDelta':
+      case 'item/fileChange/outputDelta':
+        this.eventSink({ type: 'activity-delta', id: String(message.params?.itemId ?? ''), field: 'output', text: String(message.params?.delta ?? '') })
+        break
+      case 'item/commandExecution/terminalInteraction':
+        this.eventSink({ type: 'activity-delta', id: String(message.params?.itemId ?? ''), field: 'output', text: `\n› ${String(message.params?.stdin ?? '')}` })
+        break
+      case 'item/mcpToolCall/progress':
+        this.eventSink({ type: 'activity-delta', id: String(message.params?.itemId ?? ''), field: 'output', text: `${String(message.params?.message ?? '')}\n` })
+        break
       case 'command/exec/outputDelta':
-        this.eventSink({ type: 'command-output', text: String(message.params?.delta ?? '') })
+        this.eventSink({ type: 'command-output', text: decodeOutputDelta(message.params) })
         break
       case 'turn/diff/updated':
         this.eventSink({ type: 'diff', text: String(message.params?.diff ?? '') })
         break
+      case 'turn/plan/updated': {
+        const turnId = String(message.params?.turnId ?? 'current')
+        const explanation = String(message.params?.explanation ?? '').trim()
+        const steps = (Array.isArray(message.params?.plan) ? message.params.plan : [])
+          .map((step: any) => `${planStatusMark(step?.status)} ${String(step?.step ?? '')}`.trim())
+          .join('\n')
+        this.eventSink({
+          type: 'activity',
+          activity: {
+            id: `plan:${turnId}`,
+            kind: 'plan',
+            title: 'Plan',
+            text: [explanation, steps].filter(Boolean).join('\n\n'),
+            output: '',
+            status: steps.includes('○') || steps.includes('◐') ? 'running' : 'completed'
+          }
+        })
+        break
+      }
       case 'item/started': {
+        const item = message.params?.item
+        if (!item?.id) break
+        this.activeItems.set(String(item.id), item)
+        const activity = activityFromThreadItem(item, 'running')
+        if (activity) this.eventSink({ type: 'activity', activity })
         break
       }
       case 'item/completed': {
         const item = message.params?.item
+        if (!item?.id) break
+        this.activeItems.delete(String(item.id))
         if (item?.type === 'agentMessage' && item.text && item.phase !== 'commentary') {
-          this.eventSink({ type: 'message', text: String(item.text) })
+          this.eventSink({ type: 'message', id: String(item.id), text: String(item.text) })
+        } else {
+          const activity = activityFromThreadItem(item, activityStatus(item.status, 'completed'))
+          if (activity) this.eventSink({ type: 'activity', activity })
         }
         break
       }
-      case 'turn/completed':
+      case 'warning':
+      case 'guardianWarning':
+      case 'deprecationNotice':
+      case 'configWarning':
+      case 'model/rerouted':
+        this.eventSink({
+          type: 'activity',
+          activity: {
+            id: `${message.method}:${Date.now()}`,
+            kind: 'system',
+            title: notificationTitle(message.method),
+            text: notificationText(message.params),
+            output: '',
+            status: 'completed'
+          }
+        })
+        break
+      case 'thread/compacted':
+        this.eventSink({
+          type: 'activity',
+          activity: { id: `compaction:${Date.now()}`, kind: 'system', title: 'Context compacted', text: 'Codex compacted earlier context to continue working.', output: '', status: 'completed' }
+        })
+        break
+      case 'turn/completed': {
+        const completedStatus: CodexActivityStatus = message.params?.turn?.status === 'completed' ? 'completed' : 'failed'
+        for (const item of this.activeItems.values()) {
+          const activity = activityFromThreadItem(item, completedStatus)
+          if (activity) this.eventSink({ type: 'activity', activity })
+        }
+        this.activeItems.clear()
+        const turnError = message.params?.turn?.error?.message
+        if (turnError) this.eventSink({ type: 'error', text: String(turnError) })
         this.eventSink({ type: 'turn-completed' })
         break
+      }
       case 'error':
         this.eventSink({ type: 'error', text: String(message.params?.message ?? 'Codex error') })
         break
@@ -380,6 +472,187 @@ export class CodexClient {
   }
 }
 
+export function activityFromThreadItem(item: any, status: CodexActivityStatus): CodexActivity | null {
+  if (!item?.id || !item?.type) return null
+  const id = String(item.id)
+
+  switch (item.type) {
+    case 'agentMessage':
+      return item.phase === 'commentary'
+        ? { id, kind: 'commentary', title: 'Codex update', text: String(item.text ?? ''), output: '', status }
+        : null
+    case 'reasoning':
+      return { id, kind: 'reasoning', title: 'Reasoning', text: stringList(item.summary).join('\n\n'), output: '', status }
+    case 'plan':
+      return { id, kind: 'plan', title: 'Plan', text: String(item.text ?? ''), output: '', status }
+    case 'commandExecution':
+      return {
+        id,
+        kind: 'command',
+        title: commandTitle(item),
+        text: String(item.command ?? ''),
+        output: String(item.aggregatedOutput ?? ''),
+        detail: String(item.cwd ?? ''),
+        status: activityStatus(item.status, status),
+        durationMs: finiteNumber(item.durationMs),
+        exitCode: finiteNumber(item.exitCode)
+      }
+    case 'fileChange':
+      return {
+        id,
+        kind: 'file',
+        title: fileChangeTitle(item.changes),
+        text: (Array.isArray(item.changes) ? item.changes : []).map((change: any) => `${String(change?.kind ?? 'update')} ${String(change?.path ?? '')}`.trim()).join('\n'),
+        output: '',
+        status: activityStatus(item.status, status)
+      }
+    case 'mcpToolCall':
+      return {
+        id,
+        kind: 'tool',
+        title: `${String(item.server ?? 'MCP')} · ${String(item.tool ?? 'tool')}`,
+        text: formatJson(item.arguments),
+        output: item.error?.message ? String(item.error.message) : formatToolResult(item.result),
+        status: activityStatus(item.status, status),
+        durationMs: finiteNumber(item.durationMs)
+      }
+    case 'dynamicToolCall':
+      return {
+        id,
+        kind: 'tool',
+        title: [item.namespace, item.tool].filter(Boolean).map(String).join(' · ') || 'Tool',
+        text: formatJson(item.arguments),
+        output: formatDynamicToolOutput(item.contentItems),
+        status: item.success === false ? 'failed' : activityStatus(item.status, status),
+        durationMs: finiteNumber(item.durationMs)
+      }
+    case 'collabAgentToolCall':
+      return {
+        id,
+        kind: 'tool',
+        title: `Agent · ${friendlyToken(item.tool)}`,
+        text: String(item.prompt ?? ''),
+        output: item.receiverThreadIds?.length ? `Threads: ${item.receiverThreadIds.join(', ')}` : '',
+        status: activityStatus(item.status, status)
+      }
+    case 'subAgentActivity':
+      return { id, kind: 'tool', title: `Agent ${friendlyToken(item.kind)}`, text: String(item.agentPath ?? item.agentThreadId ?? ''), output: '', status }
+    case 'webSearch':
+      return { id, kind: 'search', title: webSearchTitle(item.action), text: webSearchText(item), output: '', status }
+    case 'imageView':
+      return { id, kind: 'image', title: 'Viewed image', text: String(item.path ?? ''), output: '', status }
+    case 'imageGeneration':
+      return { id, kind: 'image', title: 'Generated image', text: String(item.revisedPrompt ?? ''), output: String(item.savedPath ?? item.result ?? ''), status: activityStatus(item.status, status) }
+    case 'sleep':
+      return { id, kind: 'system', title: 'Waiting', text: `${Number(item.durationMs ?? 0)} ms`, output: '', status }
+    case 'enteredReviewMode':
+      return { id, kind: 'system', title: 'Entered review mode', text: String(item.review ?? ''), output: '', status }
+    case 'exitedReviewMode':
+      return { id, kind: 'system', title: 'Exited review mode', text: String(item.review ?? ''), output: '', status }
+    case 'contextCompaction':
+      return { id, kind: 'system', title: 'Context compacted', text: 'Codex compacted earlier context to continue working.', output: '', status }
+    default:
+      return null
+  }
+}
+
+function activityStatus(value: unknown, fallback: CodexActivityStatus): CodexActivityStatus {
+  const status = String(value ?? '')
+  if (status === 'failed' || status === 'declined') return 'failed'
+  if (status === 'completed') return 'completed'
+  if (status === 'inProgress' || status === 'in_progress') return 'running'
+  return fallback
+}
+
+function commandTitle(item: any): string {
+  const actions = Array.isArray(item?.commandActions) ? item.commandActions : []
+  const first = actions[0]
+  if (first?.type === 'read') return `Read ${String(first.name ?? 'file')}`
+  if (first?.type === 'listFiles') return 'Listed files'
+  if (first?.type === 'search') return 'Searched files'
+  return 'Ran command'
+}
+
+function fileChangeTitle(changes: unknown): string {
+  const count = Array.isArray(changes) ? changes.length : 0
+  return count === 1 ? 'Changed 1 file' : `Changed ${count} files`
+}
+
+function webSearchTitle(action: any): string {
+  if (action?.type === 'open_page') return 'Opened web page'
+  if (action?.type === 'find_in_page') return 'Searched web page'
+  return 'Searched the web'
+}
+
+function webSearchText(item: any): string {
+  const action = item?.action
+  if (action?.type === 'open_page') return String(action.url ?? item.query ?? '')
+  if (action?.type === 'find_in_page') return [action.url, action.pattern].filter(Boolean).join('\n')
+  if (Array.isArray(action?.queries)) return action.queries.map(String).join('\n')
+  return String(action?.query ?? item?.query ?? '')
+}
+
+function formatToolResult(result: any): string {
+  if (!result) return ''
+  const content = (Array.isArray(result.content) ? result.content : []).map((item: any) => {
+    if (typeof item === 'string') return item
+    if (item?.type === 'text' && item.text) return String(item.text)
+    if (item?.type === 'image' || item?.type === 'image_url') return '[image output]'
+    return formatJson(item)
+  }).filter(Boolean)
+  if (result.structuredContent != null) content.push(formatJson(result.structuredContent))
+  return content.join('\n')
+}
+
+function formatDynamicToolOutput(items: unknown): string {
+  return (Array.isArray(items) ? items : []).map((item: any) => item?.type === 'inputText' ? String(item.text ?? '') : item?.type === 'inputImage' ? '[image output]' : formatJson(item)).filter(Boolean).join('\n')
+}
+
+function formatJson(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value, null, 2) } catch { return String(value) }
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : []
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined
+  const number = Number(value)
+  return Number.isFinite(number) ? number : undefined
+}
+
+function friendlyToken(value: unknown): string {
+  return String(value ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase()
+}
+
+function planStatusMark(status: unknown): string {
+  if (status === 'completed') return '✓'
+  if (status === 'inProgress') return '◐'
+  return '○'
+}
+
+function decodeOutputDelta(params: Record<string, any> | undefined): string {
+  if (typeof params?.delta === 'string') return params.delta
+  if (typeof params?.deltaBase64 === 'string') {
+    try { return Buffer.from(params.deltaBase64, 'base64').toString('utf8') } catch { return '' }
+  }
+  return ''
+}
+
+function notificationTitle(method: string | undefined): string {
+  if (method === 'model/rerouted') return 'Model rerouted'
+  if (method === 'deprecationNotice') return 'Deprecation notice'
+  if (method === 'configWarning') return 'Configuration warning'
+  return 'Warning'
+}
+
+function notificationText(params: Record<string, any> | undefined): string {
+  return String(params?.message ?? params?.text ?? params?.reason ?? formatJson(params))
+}
+
 function extractUserRequest(text: string): string {
   const marker = '\n[User request]\n'
   const index = text.lastIndexOf(marker)
@@ -407,9 +680,14 @@ function messagesFromThread(thread: any): CodexChatMessage[] {
         if (request) messages.push({ id: String(item.id), role: 'user', text: request })
       } else if (item?.type === 'agentMessage' && item.text && item.phase !== 'commentary') {
         messages.push({ id: String(item.id), role: 'assistant', text: String(item.text) })
-      } else if (item?.type === 'fileChange') {
+      } else {
+        const activity = activityFromThreadItem(item, activityStatus(item?.status, 'completed'))
+        if (activity) messages.push({ id: activity.id, role: 'activity', text: activity.text, activity })
+      }
+
+      if (item?.type === 'fileChange') {
         const diff = fileChangesToDiff(item.changes)
-        if (diff) messages.push({ id: String(item.id), role: 'diff', text: diff })
+        if (diff) messages.push({ id: `${String(item.id)}:diff`, role: 'diff', text: diff })
       }
     }
   }

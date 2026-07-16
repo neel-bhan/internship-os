@@ -14,6 +14,7 @@ import {
   DEFAULT_RESUME_PROFILES,
   type ApplicationInput,
   type AssistantProviderId,
+  type CodexActivity,
   type CandidateIdentity,
   type CodexChatSummary,
   type CodexEditMode,
@@ -47,8 +48,9 @@ document.documentElement.style.colorScheme = initialTheme
 
 type ChatItem = {
   id: string
-  role: 'user' | 'assistant' | 'system' | 'diff'
+  role: 'user' | 'assistant' | 'system' | 'diff' | 'activity'
   text: string
+  activity?: CodexActivity
 }
 
 type DiffRow = {
@@ -526,24 +528,32 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
       if (event.type === 'message-delta') {
-        setChat((items) => {
-          const last = items.at(-1)
-          if (last?.role === 'assistant') {
-            return [...items.slice(0, -1), { ...last, text: last.text + event.text }]
-          }
-          return [...items, { id: crypto.randomUUID(), role: 'assistant', text: event.text }]
-        })
+        setChat((items) => appendAssistantDelta(items, event.id, event.text))
       } else if (event.type === 'message') {
         setChat((items) => {
+          if (event.id) {
+            const exact = items.findIndex((item) => item.id === event.id && item.role === 'assistant')
+            if (exact >= 0) return items.map((item, index) => index === exact ? { ...item, text: event.text } : item)
+          }
           const last = items.at(-1)
           if (last?.role === 'assistant' && last.text.trim() === event.text.trim()) return items
           if (last?.role === 'assistant' && event.text.endsWith(last.text)) {
             return [...items.slice(0, -1), { ...last, text: event.text }]
           }
-          return [...items, { id: crypto.randomUUID(), role: 'assistant', text: event.text }]
+          return [...items, { id: event.id ?? crypto.randomUUID(), role: 'assistant', text: event.text }]
         })
+      } else if (event.type === 'activity') {
+        setChat((items) => upsertActivity(items, event.activity))
+      } else if (event.type === 'activity-delta') {
+        setChat((items) => appendActivityDelta(items, event.id, event.field, event.text))
       } else if (event.type === 'command') {
-        setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: `Running: ${event.text}` }])
+        const id = crypto.randomUUID()
+        setChat((items) => upsertActivity(items, { id, kind: 'command', title: 'Ran command', text: event.text, output: '', status: 'running' }))
+      } else if (event.type === 'command-output') {
+        setChat((items) => {
+          const command = [...items].reverse().find((item) => item.role === 'activity' && item.activity?.kind === 'command' && item.activity.status === 'running')
+          return command ? appendActivityDelta(items, command.id, 'output', event.text) : [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }]
+        })
       } else if (event.type === 'diff') {
         setChat((items) => {
           let lastUserIndex = -1
@@ -558,6 +568,8 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       } else if (event.type === 'error') {
         setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }])
         setCodexBusy(false)
+      } else if (event.type === 'status') {
+        if (event.text.trim()) setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }])
       } else if (event.type === 'turn-completed') {
         setCodexBusy(false)
         void refresh().catch(showError)
@@ -1208,6 +1220,50 @@ function Icon({ name }: { name: 'resume' | 'tracker' | 'codex' }): React.JSX.Ele
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c.7 4.6 3 6.8 7.5 7.5-4.5.7-6.8 3-7.5 7.5-.7-4.5-3-6.8-7.5-7.5C9 10.3 11.3 8.1 12 3.5Z" /></svg>
 }
 
+function appendAssistantDelta(items: ChatItem[], id: string | undefined, text: string): ChatItem[] {
+  const exact = id ? items.findIndex((item) => item.id === id && item.role === 'assistant') : -1
+  if (exact >= 0) return items.map((item, index) => index === exact ? { ...item, text: item.text + text } : item)
+  const lastIndex = items.length - 1
+  if (!id && items[lastIndex]?.role === 'assistant') return items.map((item, index) => index === lastIndex ? { ...item, text: item.text + text } : item)
+  return [...items, { id: id || crypto.randomUUID(), role: 'assistant', text }]
+}
+
+function upsertActivity(items: ChatItem[], activity: CodexActivity): ChatItem[] {
+  const index = items.findIndex((item) => item.role === 'activity' && item.id === activity.id)
+  if (index < 0) return [...items, { id: activity.id, role: 'activity', text: activity.text, activity }]
+  return items.map((item, itemIndex) => {
+    if (itemIndex !== index || !item.activity) return item
+    const merged = {
+      ...item.activity,
+      ...activity,
+      text: activity.text || item.activity.text,
+      output: mergeActivityOutput(item.activity.output, activity.output)
+    }
+    return { ...item, text: merged.text, activity: merged }
+  })
+}
+
+function mergeActivityOutput(current: string, next: string): string {
+  if (!next) return current
+  if (!current || next === current || next.startsWith(current)) return next
+  if (current.startsWith(next)) return current
+  return `${current.trimEnd()}\n${next}`
+}
+
+function appendActivityDelta(items: ChatItem[], id: string, field: 'text' | 'output', text: string): ChatItem[] {
+  if (!id || !text) return items
+  const index = items.findIndex((item) => item.role === 'activity' && item.id === id)
+  if (index < 0) {
+    const activity: CodexActivity = { id, kind: 'system', title: 'Activity', text: field === 'text' ? text : '', output: field === 'output' ? text : '', status: 'running' }
+    return [...items, { id, role: 'activity', text: activity.text, activity }]
+  }
+  return items.map((item, itemIndex) => {
+    if (itemIndex !== index || !item.activity) return item
+    const activity = { ...item.activity, [field]: item.activity[field] + text }
+    return { ...item, text: activity.text, activity }
+  })
+}
+
 function Tracker(props: {
   applications: InternshipApplication[]
   editing: ApplicationInput | null
@@ -1721,6 +1777,51 @@ function formatAssistantInline(text: string): Array<string | React.JSX.Element> 
   })
 }
 
+function ActivityCard({ activity }: { activity: CodexActivity }): React.JSX.Element {
+  const [open, setOpen] = useState(true)
+  useEffect(() => {
+    if (activity.status === 'failed') setOpen(true)
+  }, [activity.status])
+  const prose = activity.kind === 'commentary' || activity.kind === 'reasoning' || activity.kind === 'plan'
+  const status = activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Done'
+  const metadata = [activity.durationMs != null ? formatActivityDuration(activity.durationMs) : '', activity.exitCode != null ? `exit ${activity.exitCode}` : ''].filter(Boolean).join(' · ')
+
+  return (
+    <details className={`activity-card kind-${activity.kind} ${activity.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        <span className="activity-state" />
+        <strong>{activity.title}</strong>
+        {activity.detail && <span className="activity-detail" title={activity.detail}>{activity.detail}</span>}
+        <span className="activity-meta">{metadata || status}</span>
+        <span className="activity-chevron">⌄</span>
+      </summary>
+      <div className="activity-content">
+        {activity.text ? (
+          prose ? <FormattedAssistantMessage text={activity.text} /> : <pre className="activity-input">{activity.text}</pre>
+        ) : activity.status === 'running' ? <span className="activity-waiting">Waiting for output…</span> : null}
+        {activity.output && <pre className="activity-output">{activity.output}</pre>}
+      </div>
+    </details>
+  )
+}
+
+function activityRoleLabel(activity: CodexActivity | undefined): string {
+  if (!activity) return 'Activity'
+  if (activity.kind === 'commentary') return 'Update'
+  if (activity.kind === 'reasoning') return 'Reasoning'
+  if (activity.kind === 'command') return 'Terminal'
+  if (activity.kind === 'file') return 'Files'
+  if (activity.kind === 'search') return 'Search'
+  if (activity.kind === 'image') return 'Image'
+  if (activity.kind === 'tool') return 'Tool'
+  if (activity.kind === 'plan') return 'Plan'
+  return 'Activity'
+}
+
+function formatActivityDuration(durationMs: number): string {
+  return durationMs < 1000 ? `${Math.round(durationMs)} ms` : `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`
+}
+
 function CodexDiff({ diff }: { diff: string }): React.JSX.Element {
   const lines = diff.split(/\r?\n/)
   const added = lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length
@@ -1894,11 +1995,11 @@ function CodexLauncher(props: {
                     {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask {providerName} to tailor this resume or manage an application.</p></div>}
                     {items.map((item) => (
                       <article key={item.id} className={`agent-message ${item.role}`}>
-                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : 'Activity'}</div>
-                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : item.role === 'assistant' ? <FormattedAssistantMessage text={item.text} /> : <p>{item.text}</p>}</div>
+                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : item.role === 'activity' ? activityRoleLabel(item.activity) : 'Activity'}</div>
+                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : item.role === 'assistant' ? <FormattedAssistantMessage text={item.text} /> : item.role === 'activity' && item.activity ? <ActivityCard activity={item.activity} /> : <p>{item.text}</p>}</div>
                       </article>
                     ))}
-                    {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
+                    {busy && !items.some((item) => item.activity?.status === 'running') && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
                   </div>
                 </div>
                 {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? `${providerName} login is required.`}</p><button onClick={onReconnect}>Reconnect</button></div>}

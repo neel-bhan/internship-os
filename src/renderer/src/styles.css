@@ -423,6 +423,26 @@ tbody tr:hover { background: rgba(255, 255, 255, .76); }
 .agent-message.user .agent-message-body { padding: 10px 12px; border-radius: 12px; background: rgba(0, 113, 227, .09); }
 .agent-message.system { padding-top: 9px; padding-bottom: 9px; }
 .agent-message.system .agent-message-body { color: var(--secondary); font: 10.5px/1.5 "SFMono-Regular", Menlo, Consolas, monospace; }
+.agent-message.activity { padding-top: 8px; padding-bottom: 8px; }
+.activity-card { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: rgba(128, 128, 128, .045); }
+.activity-card summary { min-height: 34px; display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto 14px; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer; list-style: none; }
+.activity-card summary::-webkit-details-marker { display: none; }
+.activity-card summary strong { overflow: hidden; color: var(--text); font-size: 10.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.activity-state { width: 7px; height: 7px; border-radius: 50%; background: #34c759; box-shadow: 0 0 0 3px rgba(52, 199, 89, .1); }
+.activity-card.running .activity-state { background: #ff9f0a; box-shadow: 0 0 0 3px rgba(255, 159, 10, .11); animation: blink 1.2s infinite; }
+.activity-card.failed .activity-state { background: #ff453a; box-shadow: 0 0 0 3px rgba(255, 69, 58, .11); }
+.activity-detail { overflow: hidden; color: var(--secondary); font: 8.5px/1.2 "SFMono-Regular", Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.activity-meta { color: var(--secondary); font-size: 8.5px; font-weight: 600; white-space: nowrap; }
+.activity-chevron { color: var(--secondary); font-size: 12px; line-height: 1; text-align: center; transition: transform .12s ease; }
+.activity-card:not([open]) .activity-chevron { transform: rotate(-90deg); }
+.activity-content { display: grid; gap: 7px; padding: 8px 9px 9px 25px; border-top: 1px solid var(--line); }
+.activity-content .formatted-assistant-message { gap: 5px; }
+.activity-content .formatted-assistant-message h3 { font-size: 11.5px; }
+.activity-content .formatted-assistant-message p { color: var(--secondary); font-size: 11px; line-height: 1.5; }
+.activity-input, .activity-output { max-height: 220px; margin: 0; overflow: auto; font: 9.5px/1.5 "SFMono-Regular", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.activity-input { color: var(--text); }
+.activity-output { padding: 7px 8px; border-radius: 7px; color: var(--secondary); background: rgba(128, 128, 128, .07); }
+.activity-waiting { color: var(--secondary); font-size: 10px; font-style: italic; }
 .agent-thinking { display: flex; align-items: center; gap: 10px; padding: 16px 6px; }
 .agent-thinking .agent-mark { width: 24px; height: 24px; border-radius: 7px; }
 .agent-thinking .agent-mark svg { width: 14px; height: 14px; }

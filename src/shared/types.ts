@@ -153,12 +153,29 @@ export interface CompileResult {
   compiledAt: string
 }
 
+export type CodexActivityKind = 'commentary' | 'reasoning' | 'plan' | 'command' | 'file' | 'tool' | 'search' | 'image' | 'system'
+export type CodexActivityStatus = 'running' | 'completed' | 'failed'
+
+export interface CodexActivity {
+  id: string
+  kind: CodexActivityKind
+  title: string
+  text: string
+  output: string
+  detail?: string
+  status: CodexActivityStatus
+  durationMs?: number
+  exitCode?: number
+}
+
 export type CodexEvent =
   | { type: 'status'; text: string }
-  | { type: 'message-delta'; text: string }
-  | { type: 'message'; text: string }
+  | { type: 'message-delta'; id?: string; text: string }
+  | { type: 'message'; id?: string; text: string }
   | { type: 'command'; text: string }
   | { type: 'command-output'; text: string }
+  | { type: 'activity'; activity: CodexActivity }
+  | { type: 'activity-delta'; id: string; field: 'text' | 'output'; text: string }
   | { type: 'diff'; text: string }
   | { type: 'turn-completed' }
   | { type: 'error'; text: string }
@@ -189,8 +206,9 @@ export interface CodexChatSummary {
 
 export interface CodexChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'diff'
+  role: 'user' | 'assistant' | 'diff' | 'activity'
   text: string
+  activity?: CodexActivity
 }
 
 export interface CodexConversation {
