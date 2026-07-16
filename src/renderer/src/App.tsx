@@ -747,7 +747,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       setChat([])
       setMessage('')
       setHistoryOpen(false)
-      setAgentStage('compose')
+      setAgentStage('conversation')
     } catch (error) {
       showError(error)
     } finally {
