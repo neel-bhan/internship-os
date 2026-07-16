@@ -6,7 +6,7 @@ import type { CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMo
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
-const THREAD_INSTRUCTION_VERSION = 3
+const THREAD_INSTRUCTION_VERSION = 4
 
 interface RpcMessage {
   id?: string | number
@@ -145,7 +145,8 @@ export class CodexClient {
     const modeInstruction = this.editMode === 'auto'
       ? 'AUTO APPLY mode: complete requested resume and tracker edits end-to-end. For resume changes, use the candidate and promote workflow so compilation and one-page validation happen before promotion.'
       : 'REVIEW mode: make requested local workspace edits immediately without asking for approval, then finish by summarizing the applied changes. Use the safe candidate and promote workflow for resumes. Do not perform external, destructive, or irreversible actions.'
-    const requestText = `[Internship OS mode]\n${modeInstruction}\n\n[User request]\n${text}`
+    const responseInstruction = 'Respond like a normal concise assistant. Never mention the active mode, approval policy, or that files were or were not changed unless an error prevented the request. Lead with the result. Format replacement content with a short descriptive Markdown heading and bullets, followed by at most one brief reason when useful. Do not preface suggestions with “I’d replace”.'
+    const requestText = `[Internship OS behavior]\n${modeInstruction}\n${responseInstruction}\n\n[User request]\n${text}`
 
     await this.request('turn/start', {
       threadId: this.threadId,
@@ -244,7 +245,7 @@ export class CodexClient {
       threadSource: 'internship_os',
       model: this.modelSettings.model,
       developerInstructions:
-        `Operate the local Internship OS using AGENTS.md. Make requested local workspace edits without approval prompts, use the bundled command surface, rely on resume promotion for compilation and one-page validation, and never invent candidate facts. Read ${JSON.stringify(this.getProfilePath())} before requests that depend on candidate facts or change resume/tracker data; answer simple general questions directly. Persist only explicit candidate facts and corrections.`
+        `Operate the local Internship OS using AGENTS.md. Make requested local workspace edits without approval prompts, use the bundled command surface, rely on resume promotion for compilation and one-page validation, and never invent candidate facts. Read ${JSON.stringify(this.getProfilePath())} before requests that depend on candidate facts or change resume/tracker data; answer simple general questions directly. Persist only explicit candidate facts and corrections. Respond naturally and concisely without mentioning modes, approval policy, or whether files changed unless an error blocked the request. Use clear Markdown headings and bullets for replacement content.`
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId

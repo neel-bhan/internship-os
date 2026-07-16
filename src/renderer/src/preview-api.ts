@@ -165,7 +165,7 @@ export function installBrowserPreviewApi(): void {
       send: async () => {
         queueMicrotask(() => {
           codexEventSink({ type: 'diff', text: 'diff --git a/resume.tex b/resume.tex\n--- a/resume.tex\n+++ b/resume.tex\n@@ -12,1 +12,1 @@\n-Old resume bullet\n+Updated resume bullet' })
-          codexEventSink({ type: 'message', text: 'Applied the local edit. The final diff is shown above.' })
+          codexEventSink({ type: 'message', text: '### Replacement\n\n**AIFA (AI For All)**\n\n- Created AI-focused educational modules and led interactive workshops.\n- Organized hackathons for 200+ students with $2,000+ in prizes.\n\n### Why this works\n\nThe wording is direct and keeps the verified impact visible.' })
           codexEventSink({ type: 'turn-completed' })
         })
       },

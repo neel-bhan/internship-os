@@ -410,6 +410,16 @@ tbody tr:hover { background: rgba(255, 255, 255, .76); }
 .agent-message-role { padding-top: 1px; color: #8e8e93; font-size: 10px; font-weight: 650; }
 .agent-message-body { min-width: 0; color: var(--text); font-size: 12.5px; line-height: 1.58; }
 .agent-message-body p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.formatted-assistant-message { display: grid; gap: 8px; }
+.formatted-assistant-message h3 { margin: 4px 0 0; color: var(--text); font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
+.formatted-assistant-message > p + h3 { margin-top: 7px; }
+.formatted-assistant-message code { padding: 1px 4px; border-radius: 4px; color: #6941a5; background: rgba(175, 126, 235, .1); font: 10.5px/1.4 "SFMono-Regular", Menlo, monospace; }
+.assistant-content-card { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: rgba(128, 128, 128, .055); }
+.assistant-content-card ul, .assistant-content-card ol { display: grid; gap: 6px; margin: 0; padding-left: 19px; }
+.assistant-content-card li { padding-left: 2px; }
+.assistant-code { display: grid; gap: 6px; max-height: 280px; margin: 0; overflow: auto; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(128, 128, 128, .055); font: 10px/1.5 "SFMono-Regular", Menlo, monospace; white-space: pre; }
+.assistant-code > span { color: var(--secondary); font: 8px/1.2 -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.assistant-code code { padding: 0; color: var(--text); background: transparent; font: inherit; }
 .agent-message.user .agent-message-body { padding: 10px 12px; border-radius: 12px; background: rgba(0, 113, 227, .09); }
 .agent-message.system { padding-top: 9px; padding-bottom: 9px; }
 .agent-message.system .agent-message-body { color: var(--secondary); font: 10.5px/1.5 "SFMono-Regular", Menlo, Consolas, monospace; }
@@ -643,6 +653,8 @@ tbody tr:hover { background: rgba(255, 255, 255, .76); }
 :root[data-theme='dark'] .edit-mode-switch button.active { color: #d6eaff; background: #505053; box-shadow: 0 1px 5px rgba(0, 0, 0, .28); }
 :root[data-theme='dark'] .edit-mode-switch button.active.auto { color: #fff; background: #0a84ff; }
 :root[data-theme='dark'] .agent-message.user .agent-message-body { background: rgba(10, 132, 255, .13); }
+:root[data-theme='dark'] .formatted-assistant-message code { color: #d8b4fe; background: rgba(147, 92, 214, .16); }
+:root[data-theme='dark'] .assistant-code code { color: var(--text); background: transparent; }
 :root[data-theme='dark'] .agent-composer { box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
 :root[data-theme='dark'] .codex-quick,
 :root[data-theme='dark'] .codex-float { border-color: rgba(255, 255, 255, .13); background: rgba(38, 38, 40, .97); box-shadow: 0 16px 54px rgba(0, 0, 0, .52); }

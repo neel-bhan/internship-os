@@ -66,7 +66,8 @@ export class ClaudeClient {
     const modeInstruction = this.editMode === 'auto'
       ? 'AUTO APPLY mode. Complete requested changes through the bundled Internship OS command surface and verify the result.'
       : 'REVIEW FIRST mode. Inspect and propose changes, but do not modify resumes, applications, tracker data, or workspace files.'
-    const prompt = `[Internship OS]\nRead AGENTS.md and ${JSON.stringify(join(this.paths.root, 'candidate-profile.md'))}. ${modeInstruction}\n\n[User request]\n${text}`
+    const responseInstruction = 'Respond like a normal concise assistant. Never mention the active mode, approval policy, or that files were or were not changed unless an error prevented the request. Lead with the result. Format replacement content with a short descriptive Markdown heading and bullets, followed by at most one brief reason when useful. Do not preface suggestions with “I’d replace”.'
+    const prompt = `[Internship OS]\nRead AGENTS.md and ${JSON.stringify(join(this.paths.root, 'candidate-profile.md'))}. ${modeInstruction} ${responseInstruction}\n\n[User request]\n${text}`
     const args = [
       '-p', prompt,
       '--output-format', 'stream-json',

@@ -81,6 +81,12 @@ ${profileList}
 ## Scope
 
 Keep work focused on internship applications, resumes, and the visible tracker fields: Company, Position, Date Applied, Application Status, and Details.
+
+## Response style
+
+- Respond naturally and concisely without mentioning the active mode, approval policy, or whether files changed unless an error blocked the request.
+- Lead with the result. Do not preface replacement copy with "I'd replace".
+- Put replacement content under a short descriptive Markdown heading with clear bullets, followed by at most one brief explanation when useful.
 `
 }
 

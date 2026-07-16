@@ -1648,6 +1648,78 @@ function relativeChatTime(timestamp: number): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function FormattedAssistantMessage({ text }: { text: string }): React.JSX.Element {
+  const lines = text.split(/\r?\n/)
+  const blocks: React.JSX.Element[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index]
+    if (!line.trim()) { index += 1; continue }
+
+    if (line.trim().startsWith('```')) {
+      const language = line.trim().slice(3).trim()
+      const code: string[] = []
+      index += 1
+      while (index < lines.length && !lines[index].trim().startsWith('```')) code.push(lines[index++])
+      if (index < lines.length) index += 1
+      blocks.push(<pre className="assistant-code" key={`code-${index}`}><span>{language || 'Text'}</span><code>{code.join('\n')}</code></pre>)
+      continue
+    }
+
+    const heading = line.match(/^#{1,4}\s+(.+)$/)
+    if (heading) {
+      blocks.push(<h3 key={`heading-${index}`}>{formatAssistantInline(heading[1])}</h3>)
+      index += 1
+      continue
+    }
+
+    const unordered = line.match(/^\s*[-*]\s+(.+)$/)
+    if (unordered) {
+      const items: string[] = []
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*[-*]\s+(.+)$/)
+        if (!match) break
+        items.push(match[1])
+        index += 1
+      }
+      blocks.push(<div className="assistant-content-card" key={`list-${index}`}><ul>{items.map((item, itemIndex) => <li key={itemIndex}>{formatAssistantInline(item)}</li>)}</ul></div>)
+      continue
+    }
+
+    const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/)
+    if (ordered) {
+      const items: string[] = []
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*\d+[.)]\s+(.+)$/)
+        if (!match) break
+        items.push(match[1])
+        index += 1
+      }
+      blocks.push(<div className="assistant-content-card" key={`ordered-${index}`}><ol>{items.map((item, itemIndex) => <li key={itemIndex}>{formatAssistantInline(item)}</li>)}</ol></div>)
+      continue
+    }
+
+    const paragraph: string[] = [line.trim()]
+    index += 1
+    while (index < lines.length && lines[index].trim() && !/^(#{1,4}\s+|\s*[-*]\s+|\s*\d+[.)]\s+|```)/.test(lines[index])) {
+      paragraph.push(lines[index].trim())
+      index += 1
+    }
+    blocks.push(<p key={`paragraph-${index}`}>{paragraph.map((part, partIndex) => <span key={partIndex}>{formatAssistantInline(part)}{partIndex < paragraph.length - 1 && <br />}</span>)}</p>)
+  }
+
+  return <div className="formatted-assistant-message">{blocks}</div>
+}
+
+function formatAssistantInline(text: string): Array<string | React.JSX.Element> {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={index}>{part.slice(2, -2)}</strong>
+    if (part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>
+    return part
+  })
+}
+
 function CodexDiff({ diff }: { diff: string }): React.JSX.Element {
   const lines = diff.split(/\r?\n/)
   const added = lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length
@@ -1822,7 +1894,7 @@ function CodexLauncher(props: {
                     {items.map((item) => (
                       <article key={item.id} className={`agent-message ${item.role}`}>
                         <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : 'Activity'}</div>
-                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : <p>{item.text}</p>}</div>
+                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : item.role === 'assistant' ? <FormattedAssistantMessage text={item.text} /> : <p>{item.text}</p>}</div>
                       </article>
                     ))}
                     {busy && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
