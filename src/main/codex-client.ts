@@ -168,13 +168,6 @@ export class CodexClient {
 
   async setModelSettings(model: string, reasoningEffort: CodexReasoningEffort): Promise<CodexState> {
     this.modelSettings = { model: model.trim() || 'gpt-5.6-luna', reasoningEffort }
-    if (this.connected && this.threadId) {
-      await this.request('thread/settings/update', {
-        threadId: this.threadId,
-        model: this.modelSettings.model,
-        effort: this.modelSettings.reasoningEffort
-      })
-    }
     return this.getState()
   }
 

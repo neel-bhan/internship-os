@@ -764,6 +764,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
   }
 
   async function changeCodexPerformance(model: string, reasoningEffort: CodexReasoningEffort): Promise<void> {
+    setCodexState((current) => current ? { ...current, model, reasoningEffort } : current)
     try {
       setCodexState(await window.internshipOS.codex.setModelSettings(model, reasoningEffort))
     } catch (error) {
