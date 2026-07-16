@@ -53,6 +53,12 @@ type ChatItem = {
   activity?: CodexActivity
 }
 
+type ActivityGroup = {
+  id: string
+  role: 'activity-group'
+  activities: CodexActivity[]
+}
+
 type DiffRow = {
   type: 'hunk' | 'added' | 'removed' | 'context'
   text: string
@@ -552,7 +558,9 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       } else if (event.type === 'command-output') {
         setChat((items) => {
           const command = [...items].reverse().find((item) => item.role === 'activity' && item.activity?.kind === 'command' && item.activity.status === 'running')
-          return command ? appendActivityDelta(items, command.id, 'output', event.text) : [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }]
+          if (command) return appendActivityDelta(items, command.id, 'output', event.text)
+          const id = crypto.randomUUID()
+          return upsertActivity(items, { id, kind: 'system', title: 'Terminal output', text: '', output: event.text, status: 'completed' })
         })
       } else if (event.type === 'diff') {
         setChat((items) => {
@@ -566,10 +574,14 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
           return [...items, { id: crypto.randomUUID(), role: 'diff', text: event.text }]
         })
       } else if (event.type === 'error') {
-        setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }])
+        const id = crypto.randomUUID()
+        setChat((items) => upsertActivity(items, { id, kind: 'system', title: 'Error', text: event.text, output: '', status: 'failed' }))
         setCodexBusy(false)
       } else if (event.type === 'status') {
-        if (event.text.trim()) setChat((items) => [...items, { id: crypto.randomUUID(), role: 'system', text: event.text }])
+        if (event.text.trim()) {
+          const id = crypto.randomUUID()
+          setChat((items) => upsertActivity(items, { id, kind: 'system', title: 'Status', text: event.text, output: '', status: 'completed' }))
+        }
       } else if (event.type === 'turn-completed') {
         setCodexBusy(false)
         void refresh().catch(showError)
@@ -1777,45 +1789,68 @@ function formatAssistantInline(text: string): Array<string | React.JSX.Element> 
   })
 }
 
-function ActivityCard({ activity }: { activity: CodexActivity }): React.JSX.Element {
-  const [open, setOpen] = useState(true)
+function groupActivityItems(items: ChatItem[]): Array<ChatItem | ActivityGroup> {
+  const grouped: Array<ChatItem | ActivityGroup> = []
+  for (const item of items) {
+    if (item.role !== 'activity' || !item.activity) {
+      grouped.push(item)
+      continue
+    }
+    const previous = grouped.at(-1)
+    if (previous?.role === 'activity-group') previous.activities.push(item.activity)
+    else grouped.push({ id: `activity:${item.id}`, role: 'activity-group', activities: [item.activity] })
+  }
+  return grouped
+}
+
+function ActivityTranscript({ activities, active }: { activities: CodexActivity[]; active: boolean }): React.JSX.Element {
+  const failed = activities.some((activity) => activity.status === 'failed')
+  const [open, setOpen] = useState(active || failed)
   useEffect(() => {
-    if (activity.status === 'failed') setOpen(true)
-  }, [activity.status])
-  const prose = activity.kind === 'commentary' || activity.kind === 'reasoning' || activity.kind === 'plan'
-  const status = activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Done'
-  const metadata = [activity.durationMs != null ? formatActivityDuration(activity.durationMs) : '', activity.exitCode != null ? `exit ${activity.exitCode}` : ''].filter(Boolean).join(' · ')
+    if (active || failed) setOpen(true)
+    else setOpen(false)
+  }, [active, failed])
+  const running = activities.some((activity) => activity.status === 'running')
 
   return (
-    <details className={`activity-card kind-${activity.kind} ${activity.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>
-        <span className="activity-state" />
-        <strong>{activity.title}</strong>
-        {activity.detail && <span className="activity-detail" title={activity.detail}>{activity.detail}</span>}
-        <span className="activity-meta">{metadata || status}</span>
-        <span className="activity-chevron">⌄</span>
+    <details className={`activity-transcript ${running ? 'running' : failed ? 'failed' : 'completed'}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="activity-transcript-heading">
+        <span className="activity-transcript-state" />
+        <strong>{running ? 'Working' : failed ? 'Activity finished with an error' : 'Activity'}</strong>
+        <span>{activities.length} {activities.length === 1 ? 'step' : 'steps'}</span>
+        <i>⌄</i>
       </summary>
-      <div className="activity-content">
-        {activity.text ? (
-          prose ? <FormattedAssistantMessage text={activity.text} /> : <pre className="activity-input">{activity.text}</pre>
-        ) : activity.status === 'running' ? <span className="activity-waiting">Waiting for output…</span> : null}
-        {activity.output && <pre className="activity-output">{activity.output}</pre>}
+      <div className="activity-terminal-lines">
+        {activities.map((activity) => <TerminalActivityLine activity={activity} key={activity.id} />)}
       </div>
     </details>
   )
 }
 
-function activityRoleLabel(activity: CodexActivity | undefined): string {
-  if (!activity) return 'Activity'
-  if (activity.kind === 'commentary') return 'Update'
-  if (activity.kind === 'reasoning') return 'Reasoning'
-  if (activity.kind === 'command') return 'Terminal'
-  if (activity.kind === 'file') return 'Files'
-  if (activity.kind === 'search') return 'Search'
-  if (activity.kind === 'image') return 'Image'
-  if (activity.kind === 'tool') return 'Tool'
-  if (activity.kind === 'plan') return 'Plan'
-  return 'Activity'
+function TerminalActivityLine({ activity }: { activity: CodexActivity }): React.JSX.Element {
+  const preview = activityPreview(activity)
+  const outputLines = activity.output ? activity.output.split(/\r?\n/).filter(Boolean).length : 0
+  const metadata = [activity.durationMs != null ? formatActivityDuration(activity.durationMs) : '', activity.exitCode != null ? `exit ${activity.exitCode}` : '', outputLines ? `${outputLines} ${outputLines === 1 ? 'line' : 'lines'}` : ''].filter(Boolean).join(' · ')
+  const expandable = Boolean(activity.output || activity.detail || activity.text.includes('\n') || activity.text.length > 150)
+  const heading = <><span className="terminal-status">{activity.status === 'running' ? '◐' : activity.status === 'failed' ? '×' : '✓'}</span><strong>{activity.title}</strong><span className="terminal-preview">{preview}</span>{metadata && <span className="terminal-meta">{metadata}</span>}{expandable && <i>›</i>}</>
+
+  if (!expandable) return <div className={`terminal-activity-line ${activity.status}`}>{heading}</div>
+  return (
+    <details className={`terminal-activity-line ${activity.status}`}>
+      <summary>{heading}</summary>
+      <div className="terminal-activity-detail">
+        {activity.detail && <span>{activity.detail}</span>}
+        {activity.text && <pre>{activity.text}</pre>}
+        {activity.output && <pre className="terminal-output">{activity.output}</pre>}
+      </div>
+    </details>
+  )
+}
+
+function activityPreview(activity: CodexActivity): string {
+  const source = activity.text || activity.output
+  const line = source.split(/\r?\n/).map((part) => part.trim()).find(Boolean) ?? (activity.status === 'running' ? 'Waiting for output…' : '')
+  return line.replace(/\s+/g, ' ').slice(0, 180)
 }
 
 function formatActivityDuration(durationMs: number): string {
@@ -1828,15 +1863,15 @@ function CodexDiff({ diff }: { diff: string }): React.JSX.Element {
   const removed = lines.filter((line) => line.startsWith('-') && !line.startsWith('---')).length
 
   return (
-    <div className="codex-diff-card">
-      <div className="codex-diff-heading"><strong>Applied changes</strong><span><i>+{added}</i><b>−{removed}</b></span></div>
+    <details className="codex-diff-card">
+      <summary className="codex-diff-heading"><strong>Applied changes</strong><span><i>+{added}</i><b>−{removed}</b><em>⌄</em></span></summary>
       <pre>{lines.map((line, index) => {
         const type = line.startsWith('diff --git') || line.startsWith('---') || line.startsWith('+++')
           ? 'meta'
           : line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : 'context'
         return <span className={type} key={`${index}-${line.slice(0, 24)}`}>{line || ' '}</span>
       })}</pre>
-    </div>
+    </details>
   )
 }
 
@@ -1889,6 +1924,8 @@ function CodexLauncher(props: {
   const mode = state?.editMode ?? 'review'
   const status = !state?.authenticated ? 'Offline' : busy ? 'Working' : 'Ready'
   const providerName = state?.providerName ?? 'Assistant'
+  const displayItems = useMemo(() => groupActivityItems(items), [items])
+  const liveActivityGroupId = [...displayItems].reverse().find((item) => item.role === 'activity-group')?.id
 
   if (state?.provider === 'none') return <></>
 
@@ -1993,10 +2030,15 @@ function CodexLauncher(props: {
                 >
                   <div className="codex-feed-inner">
                     {items.length === 0 && <div className="agent-empty"><span className="agent-mark large"><Icon name="codex" /></span><p>Ask {providerName} to tailor this resume or manage an application.</p></div>}
-                    {items.map((item) => (
+                    {displayItems.map((item) => item.role === 'activity-group' ? (
+                      <article key={item.id} className="agent-message activity-group">
+                        <div className="agent-message-role">Activity</div>
+                        <div className="agent-message-body"><ActivityTranscript activities={item.activities} active={busy && item.id === liveActivityGroupId} /></div>
+                      </article>
+                    ) : (
                       <article key={item.id} className={`agent-message ${item.role}`}>
-                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : item.role === 'activity' ? activityRoleLabel(item.activity) : 'Activity'}</div>
-                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : item.role === 'assistant' ? <FormattedAssistantMessage text={item.text} /> : item.role === 'activity' && item.activity ? <ActivityCard activity={item.activity} /> : <p>{item.text}</p>}</div>
+                        <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : 'Activity'}</div>
+                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : item.role === 'assistant' ? <FormattedAssistantMessage text={item.text} /> : <p>{item.text}</p>}</div>
                       </article>
                     ))}
                     {busy && !items.some((item) => item.activity?.status === 'running') && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
