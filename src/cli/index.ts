@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { ApplicationStore } from '../main/core/database'
+import { exportPdfArtifact } from '../main/core/artifacts'
 import { AppPaths } from '../main/core/paths'
 import { ResumeManager } from '../main/core/resume'
 import { SettingsStore } from '../main/core/settings'
-import type { ApplicationInput, ApplicationStatus } from '../shared/types'
+import { DEFAULT_APPLICATION_STATUS, type ApplicationInput, type ApplicationStatus } from '../shared/types'
 
 const args = process.argv.slice(2)
 const [area, action] = args
@@ -21,12 +23,21 @@ resume.initialize()
 try {
   if (area === 'application') await applicationCommand(action, flags)
   else if (area === 'resume') await resumeCommand(action, flags)
+  else if (area === 'artifact') artifactCommand(action, flags)
   else usage()
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))
   process.exitCode = 1
 } finally {
   store.close()
+}
+
+function artifactCommand(actionName: string | undefined, values: Record<string, string>): void {
+  if (actionName !== 'export-pdf') return usage()
+  const workspaceRoot = resolve(root, 'assistant-workspace')
+  const downloadsRoot = process.env.INTERNSHIP_OS_PUBLIC_DOWNLOADS ?? resolve(homedir(), 'Downloads')
+  const path = exportPdfArtifact(resolve(requireFlag(values, 'path')), workspaceRoot, downloadsRoot, values.name)
+  output({ ok: true, path })
 }
 
 async function applicationCommand(actionName: string | undefined, values: Record<string, string>): Promise<void> {
@@ -41,7 +52,7 @@ async function applicationCommand(actionName: string | undefined, values: Record
   const existing = actionName === 'update' ? store.get(requireFlag(values, 'id')) : null
   if (actionName === 'update' && !existing) throw new Error(`Application not found: ${values.id}`)
 
-  const status = (values.status ?? existing?.status ?? 'In Progress') as ApplicationStatus
+  const status = (values.status ?? existing?.status ?? DEFAULT_APPLICATION_STATUS) as ApplicationStatus
   if (!['Submitted', 'In Progress', 'Rejected'].includes(status)) {
     throw new Error('Status must be Submitted, In Progress, or Rejected.')
   }
@@ -74,6 +85,11 @@ async function resumeCommand(actionName: string | undefined, values: Record<stri
   if (actionName === 'draft-select') return output(resume.selectJobDraft(resolveDraftId(values)))
   if (actionName === 'draft-stop') return output(resume.selectJobDraft(null))
   if (actionName === 'draft-delete') return output(resume.discardJobDraft(resolveDraftId(values)))
+  if (actionName === 'draft-promote') {
+    if (values.id || values.name) resume.selectJobDraft(resolveDraftId(values))
+    if (!resume.getState().jobDraft.active) throw new Error('Open a job draft or pass --name/--id before promoting.')
+    return output(await resume.promoteActiveJobDraftToProfile())
+  }
   if (actionName === 'prepare') return output({ candidatePath: resume.prepareCandidate() })
   if (actionName === 'promote') {
     const path = resolve(requireFlag(values, 'path'))
@@ -134,6 +150,7 @@ function usage(): never {
   npm run ios -- application add --company NAME --position ROLE [--status STATUS] [--date-applied YYYY-MM-DD] [--details TEXT]
   npm run ios -- application update --id ID [fields]
   npm run ios -- application delete --id ID
+  npm run ios -- artifact export-pdf --path /absolute/file.pdf [--name OUTPUT.pdf]
   npm run ios -- resume state|profiles|prepare|compile|undo|archive
   npm run ios -- resume select --profile PROFILE_ID
   npm run ios -- resume draft-list [--profile PROFILE]
@@ -141,5 +158,6 @@ function usage(): never {
   npm run ios -- resume draft-select --name NAME|--id ID [--profile PROFILE]
   npm run ios -- resume draft-stop [--profile PROFILE]
   npm run ios -- resume draft-delete --name NAME|--id ID [--profile PROFILE]
+  npm run ios -- resume draft-promote [--name NAME|--id ID] [--profile PROFILE]
   npm run ios -- resume promote --path CANDIDATE_TEX`)
 }

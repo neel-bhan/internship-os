@@ -27,19 +27,15 @@ Never edit the SQLite database or managed resume folders directly. Use the CLI c
 - Preserve existing local data through versioned, backed-up migrations.
 - New installations must complete onboarding before entering the workspace.
 - `npm run dev` uses the normal local profile. `npm run dev:fresh` must use isolated disposable data and downloads.
-
-## Resume safety
-
-- Never invent candidate facts.
-- Keep promoted resumes readable and exactly one page.
-- Never edit a canonical resume directly. Prepare a candidate and promote it through the CLI.
+- Keep promoted resumes readable. Report page count and allow successful multi-page promotion.
+- Never edit a canonical resume directly. Prepare a candidate and promote it through the CLI, or use the explicit draft-to-main promotion command after successful compilation and an undo snapshot.
 - Application submission must archive the exact active PDF and source.
 
 ## Assistant safety
 
 - Generate both `AGENTS.md` and `CLAUDE.md` in the managed assistant workspace.
 - Assistants must use the bundled Internship OS CLI, not source-repository commands.
-- Review mode must not change runtime data.
+- Review mode must not change runtime data except explicit tracker operations and candidate experience-bank maintenance directly supported by the user's current statements, including clear additions, corrections, preferences, and removals.
 - Auto mode remains scoped to the managed workspace and uses explicit approval handling.
 - Never automatically approve arbitrary filesystem or shell access.
 - Never collect or persist provider API keys in the renderer or application settings.

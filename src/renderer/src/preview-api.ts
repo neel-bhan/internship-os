@@ -10,6 +10,11 @@ import {
   type UserSettings
 } from '../../shared/types'
 
+function localDate(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
 export function installBrowserPreviewApi(): void {
   let applications: InternshipApplication[] = []
   const profileSources = new Map(RESUME_PROFILES.map((profile) => [profile.id, resumeSource]))
@@ -39,7 +44,7 @@ export function installBrowserPreviewApi(): void {
       summary: '2 lines rewritten',
       addedLines: 2,
       removedLines: 2,
-      diff: '@@ old 114 · new 114 @@\n- Built REST APIs for internal services.\n+ Built fault-tolerant .NET REST APIs with advanced error handling.\n  \\resumeItemListEnd',
+      diff: '@@ old 28 · new 28 @@\n-   \\item Built REST APIs for internal services.\n+   \\item Replace this text with a verified accomplishment.\n    \\item Keep every claim factual, specific, and concise.',
       changedAt: new Date().toISOString()
     }
   }
@@ -51,18 +56,20 @@ export function installBrowserPreviewApi(): void {
       getState: async () => ({
         settings: previewSettings,
         tools: [],
-        legacyDataDetected: false
+        legacyDataDetected: false,
+        freshWorkspace: false
       }),
       refreshTools: async () => [],
       chooseResumeFile: async () => null,
       openAssistantSetup: async () => undefined,
-      complete: async (input) => ({ settings: { version: 1, onboardingComplete: true, ...input, codexModel: input.codexModel ?? 'gpt-5.6-luna', codexReasoningEffort: input.codexReasoningEffort ?? 'low' }, tools: [], legacyDataDetected: false })
+      complete: async (input) => ({ settings: { version: 1, onboardingComplete: true, ...input, codexModel: input.codexModel ?? 'gpt-5.6-luna', codexReasoningEffort: input.codexReasoningEffort ?? 'low' }, tools: [], legacyDataDetected: false, freshWorkspace: false })
     },
     settings: {
       get: async () => ({
         settings: previewSettings,
         tools: [],
-        legacyDataDetected: false
+        legacyDataDetected: false,
+        freshWorkspace: false
       }),
       save: async (input) => {
         previewSettings = { version: 1, onboardingComplete: true, ...input, codexModel: input.codexModel ?? 'gpt-5.6-luna', codexReasoningEffort: input.codexReasoningEffort ?? 'low' }
@@ -76,7 +83,7 @@ export function installBrowserPreviewApi(): void {
           profiles: input.resumeProfiles
         }
         codex = { ...codex, provider: input.assistantProvider, providerName: input.assistantProvider === 'claude' ? 'Claude' : input.assistantProvider === 'codex' ? 'Codex' : 'No assistant', editMode: input.editMode, model: previewSettings.codexModel, reasoningEffort: previewSettings.codexReasoningEffort }
-        return { settings: previewSettings, tools: [], legacyDataDetected: false }
+        return { settings: previewSettings, tools: [], legacyDataDetected: false, freshWorkspace: false }
       },
       refreshTools: async () => [],
       openAssistantSetup: async () => undefined
@@ -85,7 +92,15 @@ export function installBrowserPreviewApi(): void {
       list: async () => applications,
       save: async (input: ApplicationInput) => {
         const now = new Date().toISOString()
-        const item: InternshipApplication = { ...input, id: input.id ?? crypto.randomUUID(), createdAt: now, updatedAt: now, submissions: [] }
+        const existing = input.id ? applications.find((application) => application.id === input.id) : undefined
+        const item: InternshipApplication = {
+          ...input,
+          id: input.id ?? crypto.randomUUID(),
+          dateApplied: input.dateApplied || (input.status === 'Submitted' ? localDate() : null),
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+          submissions: existing?.submissions ?? []
+        }
         applications = [item, ...applications.filter((application) => application.id !== item.id)]
         return applications
       },
@@ -126,6 +141,18 @@ export function installBrowserPreviewApi(): void {
         const drafts = resume.jobDraft.drafts.filter((draft) => draft.id !== draftId)
         const removedActive = resume.jobDraft.id === draftId
         resume = { ...resume, jobDraft: { exists: drafts.length > 0, active: removedActive ? false : resume.jobDraft.active, id: removedActive ? null : resume.jobDraft.id, name: removedActive ? null : resume.jobDraft.name, drafts } }
+        return resume
+      },
+      promoteJobDraft: async (source?: string) => {
+        const promotedSource = source ?? resume.source
+        const drafts = resume.jobDraft.drafts.filter((draft) => draft.id !== resume.jobDraft.id)
+        profileSources.set(resume.activeProfileId, promotedSource)
+        resume = {
+          ...resume,
+          source: promotedSource,
+          jobDraft: { exists: drafts.length > 0, active: false, id: null, name: null, drafts },
+          lastCompile: { ok: true, pages: 1, compiler: 'pdflatex', message: `${resume.jobDraft.name ?? 'Draft'} is now the ${resume.profileName} main resume.`, errors: [], compiledAt: new Date().toISOString() }
+        }
         return resume
       },
       saveAndCompile: async (source: string) => {
@@ -171,6 +198,9 @@ export function installBrowserPreviewApi(): void {
           codexEventSink({ type: 'message', text: '### Replacement\n\n**AIFA (AI For All)**\n\n- Created AI-focused educational modules and led interactive workshops.\n- Organized hackathons for 200+ students with $2,000+ in prizes.\n\n### Why this works\n\nThe wording is direct and keeps the verified impact visible.' })
           codexEventSink({ type: 'turn-completed' })
         })
+      },
+      interrupt: async () => {
+        queueMicrotask(() => codexEventSink({ type: 'turn-completed' }))
       },
       respondToApproval: async () => undefined,
       onEvent: (callback) => {

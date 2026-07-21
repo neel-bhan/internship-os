@@ -1,5 +1,80 @@
 import { describe, expect, it } from 'vitest'
-import { activityFromThreadItem } from './codex-client'
+import { activityFromThreadItem, CODEX_APP_SERVER_ARGS, codexExecutableCandidates, codexTurnInput, codexTurnModeInstruction, codexWorkspaceSandboxPolicy, resolvePluginInstallTarget } from './codex-client'
+import { claudeTurnModeInstruction } from './claude-client'
+
+describe('Codex research configuration', () => {
+  it('keeps command network access and live web search enabled', () => {
+    expect(CODEX_APP_SERVER_ARGS).toContain('sandbox_workspace_write.network_access=true')
+    expect(CODEX_APP_SERVER_ARGS).toContain('web_search="live"')
+    expect(codexWorkspaceSandboxPolicy('/workspace', '/Users/test/Downloads')).toEqual({
+      type: 'workspaceWrite',
+      writableRoots: ['/workspace', '/Users/test/Downloads'],
+      networkAccess: true
+    })
+  })
+})
+
+describe('Codex installation discovery', () => {
+  it('checks the official standalone install directory and common user-level package managers', () => {
+    const candidates = codexExecutableCandidates({ HOME: '/Users/friend', PATH: '/custom/bin' })
+    expect(candidates).toContain('/Users/friend/.local/bin/codex')
+    expect(candidates).toContain('/Users/friend/.volta/bin/codex')
+    expect(candidates).toContain('/Users/friend/.npm-global/bin/codex')
+    expect(candidates).toContain('/custom/bin/codex')
+  })
+})
+
+describe('Codex multimodal input', () => {
+  it('sends managed images through the native localImage turn input', () => {
+    expect(codexTurnInput('Review this screenshot', [{
+      id: 'image-1',
+      name: 'Screenshot.png',
+      mimeType: 'image/png',
+      path: '/workspace/.attachments/image.png'
+    }])).toEqual([
+      { type: 'text', text: 'Review this screenshot', text_elements: [] },
+      { type: 'localImage', path: '/workspace/.attachments/image.png', detail: 'auto' }
+    ])
+  })
+})
+
+describe('assistant review behavior', () => {
+  it('pre-authorizes tracker and candidate-bank maintenance while preserving review for other edits', () => {
+    for (const instruction of [codexTurnModeInstruction('review'), claudeTurnModeInstruction('review')]) {
+      expect(instruction).toContain('application tracker record')
+      expect(instruction).toContain('Candidate experience-bank maintenance')
+      expect(instruction).toContain('additions, corrections, preferences, and removals')
+      expect(instruction).toContain('immediately')
+      expect(instruction).toContain('separate approval')
+      expect(instruction).toContain("wait for the user's explicit approval")
+      expect(instruction).toContain('cover-letter PDF')
+      expect(instruction).toContain('Downloads folder')
+    }
+  })
+})
+
+describe('Codex plugin requests', () => {
+  it('resolves recommended remote ids against the current marketplace catalog', () => {
+    expect(resolvePluginInstallTarget('github@openai-curated-remote', {
+      marketplaces: [{
+        name: 'openai-curated',
+        plugins: [{ id: 'github@openai-curated', name: 'github' }]
+      }]
+    })).toEqual({
+      pluginName: 'github',
+      remoteMarketplaceName: 'openai-curated',
+      pluginId: 'github@openai-curated'
+    })
+  })
+
+  it('normalizes remote marketplace ids when catalog lookup is unavailable', () => {
+    expect(resolvePluginInstallTarget('github@openai-curated-remote', {})).toEqual({
+      pluginName: 'github',
+      remoteMarketplaceName: 'openai-curated',
+      pluginId: 'github@openai-curated'
+    })
+  })
+})
 
 describe('Codex activity normalization', () => {
   it('keeps command output and completion metadata', () => {

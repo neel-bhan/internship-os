@@ -2,17 +2,19 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import CodeMirror from '@uiw/react-codemirror'
 import { xcodeDark, xcodeLight } from '@uiw/codemirror-theme-xcode'
 import { indentUnit, StreamLanguage } from '@codemirror/language'
-import { EditorState, type Extension, type Range } from '@codemirror/state'
-import { Decoration, EditorView, hoverTooltip, keymap, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
+import { EditorState, StateField, type Extension, type Range } from '@codemirror/state'
+import { Decoration, EditorView, keymap, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { indentWithTab } from '@codemirror/commands'
 import { stex } from '@codemirror/legacy-modes/mode/stex'
 import * as pdfjs from 'pdfjs-dist'
-import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
+import PdfJsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
   APPLICATION_STATUSES,
   CODEX_MODEL_OPTIONS,
+  DEFAULT_APPLICATION_STATUS,
   DEFAULT_RESUME_PROFILES,
   type ApplicationInput,
+  type AssistantImageAttachment,
   type AssistantProviderId,
   type CodexActivity,
   type CandidateIdentity,
@@ -32,7 +34,7 @@ import {
   type ToolCheck
 } from '../../shared/types'
 
-pdfjs.GlobalWorkerOptions.workerPort = new PdfJsWorker()
+pdfjs.GlobalWorkerOptions.workerSrc = PdfJsWorkerUrl
 
 type View = 'tracker' | 'resume'
 type Theme = 'light' | 'dark'
@@ -50,6 +52,7 @@ type ChatItem = {
   id: string
   role: 'user' | 'assistant' | 'system' | 'diff' | 'activity'
   text: string
+  images?: AssistantImageAttachment[]
   activity?: CodexActivity
 }
 
@@ -67,6 +70,78 @@ type DiffRow = {
   anchorLine?: number
 }
 
+type MenuSelectOption = {
+  value: string
+  label: string
+  detail?: string
+}
+
+const REASONING_OPTIONS: MenuSelectOption[] = [
+  { value: 'low', label: 'Low', detail: 'Fastest' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High', detail: 'Slowest' }
+]
+
+const MAX_CHAT_IMAGES = 4
+const MAX_CHAT_IMAGE_BYTES = 15 * 1024 * 1024
+const CHAT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+function MenuSelect(props: {
+  value: string
+  options: MenuSelectOption[]
+  onChange: (value: string) => void
+  ariaLabel: string
+  disabled?: boolean
+  compact?: boolean
+  className?: string
+}): React.JSX.Element {
+  const { value, options, onChange, ariaLabel, disabled = false, compact = false, className = '' } = props
+  const selected = options.find((option) => option.value === value) ?? { value, label: value }
+
+  return (
+    <details
+      className={`menu-select ${compact ? 'compact' : ''} ${disabled ? 'disabled' : ''} ${className}`.trim()}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open')
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation()
+          event.currentTarget.removeAttribute('open')
+          event.currentTarget.querySelector('summary')?.focus()
+        }
+      }}
+    >
+      <summary
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        title={[selected.label, selected.detail].filter(Boolean).join(' · ')}
+        onClick={(event) => { if (disabled) event.preventDefault() }}
+      >
+        <span>{selected.label}</span>
+      </summary>
+      <div className="menu-select-options" role="listbox" aria-label={ariaLabel}>
+        {options.map((option) => (
+          <button
+            type="button"
+            role="option"
+            aria-selected={option.value === value}
+            className={option.value === value ? 'selected' : ''}
+            key={option.value}
+            onClick={(event) => {
+              event.currentTarget.closest('details')?.removeAttribute('open')
+              onChange(option.value)
+            }}
+          >
+            <span className="menu-select-check">{option.value === value ? '✓' : ''}</span>
+            <span className="menu-select-copy"><strong>{option.label}</strong>{option.detail && <small>{option.detail}</small>}</span>
+          </button>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 function PdfPreview({ revision }: { revision: string }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const pagesRef = useRef<HTMLDivElement>(null)
@@ -74,30 +149,41 @@ function PdfPreview({ revision }: { revision: string }): React.JSX.Element {
 
   useEffect(() => {
     let disposed = false
-    let renderTasks: Array<{ cancel: () => void; promise: Promise<unknown> }> = []
-    let documentProxy: { destroy: () => Promise<void> } | null = null
+    let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null
+    let renderTasks: pdfjs.RenderTask[] = []
+    let renderGeneration = 0
     let resizeObserver: ResizeObserver | null = null
     let resizeTimer: number | null = null
 
     setError(null)
-    void window.internshipOS.resume.readPdf()
-      .then((data) => {
-        if (!data) throw new Error('PDF file is not available')
-        return pdfjs.getDocument({ data: new Uint8Array(data) }).promise
-      })
-      .then(async (pdfDocument) => {
-      documentProxy = pdfDocument
+    const settleRenders = async (): Promise<void> => {
+      const tasks = renderTasks
+      renderTasks = []
+      for (const task of tasks) task.cancel()
+      await Promise.allSettled(tasks.map((task) => task.promise))
+    }
+
+    const load = async (): Promise<void> => {
+      const data = await window.internshipOS.resume.readPdf()
+      if (disposed) return
+      if (!data) throw new Error('PDF file is not available')
+
+      loadingTask = pdfjs.getDocument({ data: new Uint8Array(data) })
+      const pdfDocument = await loadingTask.promise
+      if (disposed) return
+
       const pages = await Promise.all(
         Array.from({ length: pdfDocument.numPages }, (_, index) => pdfDocument.getPage(index + 1))
       )
+      if (disposed) return
 
-      const render = (): void => {
+      const render = async (): Promise<void> => {
+        const generation = ++renderGeneration
+        await settleRenders()
         const container = containerRef.current
         const pagesElement = pagesRef.current
-        if (disposed || !container || !pagesElement) return
+        if (disposed || generation !== renderGeneration || !container || !pagesElement) return
 
-        for (const task of renderTasks) task.cancel()
-        renderTasks = []
         pagesElement.replaceChildren()
         container.classList.toggle('multi-page', pages.length > 1)
         const availableWidth = Math.max(1, container.clientWidth - 40)
@@ -122,29 +208,39 @@ function PdfPreview({ revision }: { revision: string }): React.JSX.Element {
           if (!context) continue
           const task = page.render({ canvas, canvasContext: context, viewport })
           renderTasks.push(task)
-          void task.promise.catch((reason) => {
-            if (!disposed && reason?.name !== 'RenderingCancelledException') setError('Could not render the PDF preview.')
-          })
         }
+
+        const tasks = [...renderTasks]
+        const results = await Promise.allSettled(tasks.map((task) => task.promise))
+        const failed = results.some((result) =>
+          result.status === 'rejected' && result.reason?.name !== 'RenderingCancelledException'
+        )
+        if (!disposed && generation === renderGeneration && failed) setError('Could not render the PDF preview.')
       }
 
-      render()
+      await render()
+      if (disposed) return
       resizeObserver = new ResizeObserver(() => {
         if (resizeTimer !== null) window.clearTimeout(resizeTimer)
-        resizeTimer = window.setTimeout(render, 100)
+        resizeTimer = window.setTimeout(() => { void render() }, 100)
       })
       if (containerRef.current) resizeObserver.observe(containerRef.current)
-      })
-      .catch(() => {
-        if (!disposed) setError('Could not open the PDF preview.')
-      })
+    }
+
+    void load().catch((reason) => {
+      if (!disposed && reason?.name !== 'RenderingCancelledException') setError('Could not open the PDF preview.')
+    })
 
     return () => {
       disposed = true
+      renderGeneration += 1
       resizeObserver?.disconnect()
       if (resizeTimer !== null) window.clearTimeout(resizeTimer)
       for (const task of renderTasks) task.cancel()
-      if (documentProxy) void documentProxy.destroy()
+      const task = loadingTask
+      void settleRenders()
+        .then(() => task?.destroy())
+        .catch(() => { /* Cleanup errors should not affect the next independent preview worker. */ })
     }
   }, [revision])
 
@@ -202,12 +298,14 @@ function CompileStatus({ result }: { result: CompileResult }): React.JSX.Element
   )
 }
 
-const emptyApplication: ApplicationInput = {
-  company: '',
-  position: '',
-  dateApplied: null,
-  status: 'In Progress',
-  details: ''
+function newApplicationInput(): ApplicationInput {
+  return {
+    company: '',
+    position: '',
+    dateApplied: dateKey(new Date()),
+    status: DEFAULT_APPLICATION_STATUS,
+    details: ''
+  }
 }
 
 const latexIndentation = ViewPlugin.fromClass(
@@ -408,16 +506,16 @@ function Onboarding({ initial, onComplete }: { initial: OnboardingState; onCompl
   return (
     <main className="onboarding-shell">
       <aside className="onboarding-sidebar">
-        <div className="onboarding-brand"><strong>Internship OS</strong><span>Internship workspace</span></div>
+        <div className="onboarding-brand"><strong>Internship OS</strong><span>{initial.freshWorkspace ? 'Disposable first-run test' : 'Internship workspace'}</span></div>
         <ol>{pages.map((page, index) => <li key={page} className={index === step ? 'active' : index < step ? 'done' : ''}><i>{index < step ? '✓' : index + 1}</i>{page}</li>)}</ol>
         <span>Local-first. Your data stays on this Mac.</span>
       </aside>
       <section className="onboarding-content">
         <div className="onboarding-page">
-          {step === 0 && <div className="welcome-step"><p className="eyebrow">WELCOME</p><h1>Your internship workspace,<br />set up around you.</h1><p>Track applications, manage tailored resume profiles, and work with Codex or Claude without giving up local control.</p><div className="welcome-features"><span>✓ Local application tracker</span><span>✓ Safe resume versions</span><span>✓ Optional AI assistant</span></div></div>}
+          {step === 0 && <div className="welcome-step"><p className="eyebrow">{initial.freshWorkspace ? 'FRESH TEST' : 'WELCOME'}</p><h1>Your internship workspace,<br />set up around you.</h1><p>{initial.freshWorkspace ? 'This uses an isolated disposable data folder and never touches your normal Internship OS profile.' : 'Track applications, manage tailored resume profiles, and work with Codex or Claude without giving up local control.'}</p><div className="welcome-features"><span>✓ Local application tracker</span><span>✓ Safe resume versions</span><span>✓ Optional AI assistant</span></div></div>}
           {step === 1 && <><p className="eyebrow">ABOUT YOU</p><h1>Let’s personalize your workspace.</h1><p className="onboarding-lead">Only your name is required. These details prefill a starter resume and your private candidate profile.</p><div className="identity-grid"><label className="wide">Full name *<input autoFocus value={identity.fullName} onChange={(event) => setIdentity({ ...identity, fullName: event.target.value })} /></label><label>Email<input type="email" value={identity.email} onChange={(event) => setIdentity({ ...identity, email: event.target.value })} /></label><label>Phone<input value={identity.phone} onChange={(event) => setIdentity({ ...identity, phone: event.target.value })} /></label><label>Portfolio<input placeholder="yourname.dev" value={identity.portfolio} onChange={(event) => setIdentity({ ...identity, portfolio: event.target.value })} /></label><label>GitHub<input placeholder="github.com/username" value={identity.github} onChange={(event) => setIdentity({ ...identity, github: event.target.value })} /></label><label className="wide">LinkedIn<input placeholder="linkedin.com/in/username" value={identity.linkedin} onChange={(event) => setIdentity({ ...identity, linkedin: event.target.value })} /></label></div></>}
           {step === 2 && <><p className="eyebrow">RESUME FORMATS</p><h1>Which resumes do you want to keep?</h1><p className="onboarding-lead">Each format gets independent source, PDF, drafts, history, and undo. Choose common formats or add your own.</p><div className="profile-grid">{DEFAULT_RESUME_PROFILES.map((profile) => { const selected = profiles.some((item) => item.id === profile.id); return <button type="button" key={profile.id} className={`profile-choice ${selected ? 'selected' : ''}`} onClick={() => toggleProfile(profile)}><i>{selected ? '✓' : '+'}</i><strong>{profile.name}</strong><span>{profile.focus}</span></button> })}</div><div className="custom-profile"><input placeholder="Format name, e.g. Security" value={customName} onChange={(event) => setCustomName(event.target.value)} /><input placeholder="Focus, e.g. security engineering roles" value={customFocus} onChange={(event) => setCustomFocus(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addCustomProfile() }} /><button onClick={addCustomProfile} disabled={!customName.trim()}>Add format</button></div><div className="selected-profiles"><div className="selected-profiles-heading"><strong>Formats you’ll keep</strong><span>{profiles.length} selected</span></div>{profiles.length === 0 ? <p>Select or add at least one format.</p> : profiles.map((profile) => <div className="selected-profile-row" key={profile.id}><span><strong>{profile.name}</strong><small>{profile.focus}</small></span><button type="button" onClick={() => removeProfile(profile.id)}>Remove</button></div>)}</div><button className="import-resume" onClick={() => void chooseResume()}>{resumeFile ? `✓ ${resumeFile}` : 'Import existing .tex resume…'}</button></>}
-          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS uses the provider already installed and signed in on your Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.available ? 'Setup needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}{provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}<div className="mode-choice"><div><strong>Review</strong><span>Apply local edits and show the final diff in chat.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Complete the full local workflow automatically.</span></div></div></>}
+          {step === 3 && <><p className="eyebrow">ASSISTANT</p><h1>Choose how you want help.</h1><p className="onboarding-lead">Assistant access is optional. Internship OS checks the provider installed and signed in on this Mac.</p><div className="provider-grid">{(['codex', 'claude', 'none'] as AssistantProviderId[]).map((id) => { const tool = tools.find((item) => item.id === id); const name = id === 'codex' ? 'Codex' : id === 'claude' ? 'Claude' : 'No assistant'; return <button key={id} className={`provider-choice ${provider === id ? 'selected' : ''}`} onClick={() => setProvider(id)}><strong>{name}</strong><span>{id === 'none' ? 'Use resume and tracker tools only.' : tool?.message}</span>{id !== 'none' && <i className={tool?.authenticated ? 'ready' : ''}>{tool?.authenticated ? 'Ready' : tool?.issue === 'outdated' ? 'Update needed' : tool?.available ? 'Sign-in needed' : 'Not installed'}</i>}</button> })}</div>{provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="setup-row"><span>{selectedTool.message}</span><button onClick={() => void openAssistantSetup()} disabled={busy}>{selectedTool.issue === 'missing' || selectedTool.issue === 'outdated' ? 'Install or update' : 'Sign in'}</button><button onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}{provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}<div className="mode-choice"><div><strong>Review</strong><span>Apply requested tracker updates immediately; preview other edits for approval.</span></div><label className="switch"><input type="checkbox" checked={editMode === 'auto'} onChange={(event) => setEditMode(event.target.checked ? 'auto' : 'review')} /><i /></label><div><strong>Auto apply</strong><span>Complete the full local workflow automatically.</span></div></div></>}
           {step === 4 && <><div className="ready-mark">✓</div><p className="eyebrow">READY</p><h1>Your workspace is ready.</h1><p className="onboarding-lead">{profiles.length} resume profile{profiles.length === 1 ? '' : 's'} · {provider === 'none' ? 'No assistant' : provider === 'codex' ? 'Codex' : 'Claude'} · {editMode === 'review' ? 'Review' : 'Auto apply'}</p><div className="ready-summary"><span><strong>Resume</strong>{resumeFile ? `Imported from ${resumeFile}` : 'New starter template'}</span><span><strong>PDF export</strong>{(identity.fullName || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf</span><span><strong>Storage</strong>Local application data</span></div></>}
           {error && <div className="onboarding-error">{error}</div>}
         </div>
@@ -431,11 +529,39 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function chatImageMime(file: File): string | null {
+  if (CHAT_IMAGE_TYPES.has(file.type)) return file.type
+  const extension = file.name.split('.').at(-1)?.toLowerCase()
+  if (extension === 'png') return 'image/png'
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'gif') return 'image/gif'
+  if (extension === 'webp') return 'image/webp'
+  return null
+}
+
+function fileDataUrl(file: File, mimeType: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error(`Could not read ${file.name || 'the selected image'}.`))
+    reader.onload = () => {
+      const result = String(reader.result ?? '')
+      const separator = result.indexOf(',')
+      if (separator < 0) reject(new Error(`Could not read ${file.name || 'the selected image'}.`))
+      else resolve(`data:${mimeType};base64,${result.slice(separator + 1)}`)
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 function CodexPerformanceSettings({ model, effort, onModelChange, onEffortChange }: { model: string; effort: CodexReasoningEffort; onModelChange: (model: string) => void; onEffortChange: (effort: CodexReasoningEffort) => void }): React.JSX.Element {
+  const modelOptions: MenuSelectOption[] = [
+    ...(!CODEX_MODEL_OPTIONS.some((option) => option.id === model) ? [{ value: model, label: model, detail: 'Custom model' }] : []),
+    ...CODEX_MODEL_OPTIONS.map((option) => ({ value: option.id, label: option.name, detail: `${option.id} · ${option.description}` }))
+  ]
   return (
     <div className="codex-performance-settings">
-      <label>Model<select value={model} onChange={(event) => onModelChange(event.target.value)}>{!CODEX_MODEL_OPTIONS.some((option) => option.id === model) && <option value={model}>{model}</option>}{CODEX_MODEL_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.name} · {option.id}</option>)}</select></label>
-      <label>Reasoning<select value={effort} onChange={(event) => onEffortChange(event.target.value as CodexReasoningEffort)}><option value="low">Low · fastest</option><option value="medium">Medium</option><option value="high">High · slowest</option></select></label>
+      <label>Model<MenuSelect ariaLabel="Codex model" value={model} options={modelOptions} onChange={onModelChange} /></label>
+      <label>Reasoning<MenuSelect ariaLabel="Codex reasoning" value={effort} options={REASONING_OPTIONS} onChange={(value) => onEffortChange(value as CodexReasoningEffort)} /></label>
       <span>{CODEX_MODEL_OPTIONS.find((option) => option.id === model)?.description ?? 'Custom Codex model'}.</span>
     </div>
   )
@@ -453,6 +579,8 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
   const [codexState, setCodexState] = useState<CodexState | null>(null)
   const [chat, setChat] = useState<ChatItem[]>([])
   const [message, setMessage] = useState('')
+  const [messageImages, setMessageImages] = useState<AssistantImageAttachment[]>([])
+  const [messageImageError, setMessageImageError] = useState<string | null>(null)
   const [codexBusy, setCodexBusy] = useState(false)
   const [chatHistory, setChatHistory] = useState<CodexChatSummary[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -605,6 +733,21 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     }
   }
 
+  async function saveApplicationInline(input: ApplicationInput): Promise<void> {
+    try {
+      const next = await window.internshipOS.applications.save(input)
+      const saved = next.find((application) => application.id === input.id)
+      if (!saved) {
+        setApplications(next)
+        return
+      }
+      setApplications((current) => current.map((application) => application.id === saved.id ? saved : application))
+    } catch (error) {
+      showError(error)
+      throw error
+    }
+  }
+
   async function removeApplication(id: string): Promise<void> {
     if (!confirm('Remove this application from the tracker? Archived files will remain local.')) return
     try {
@@ -708,16 +851,90 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     }
   }
 
+  async function promoteJobDraft(): Promise<void> {
+    if (!resume?.jobDraft.active) return
+    const draftName = resume.jobDraft.name ?? 'This draft'
+    if (!confirm(`Make “${draftName}” the main ${resume.profileName} resume?\n\nThe current main resume will be saved for Undo, and this draft will disappear.`)) return
+
+    setBusy(true)
+    try {
+      const state = await window.internshipOS.resume.promoteJobDraft(source)
+      setResume(state)
+      if (!state.jobDraft.active || state.lastCompile?.ok) setSource(state.source)
+    } catch (error) {
+      showError(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function sendMessage(): Promise<void> {
     const text = message.trim()
-    if (!text || codexBusy) return
+    const images = messageImages
+    if ((!text && images.length === 0) || codexBusy) return
+    const optimisticId = crypto.randomUUID()
     setMessage('')
-    setChat((items) => [...items, { id: crypto.randomUUID(), role: 'user', text }])
+    setMessageImages([])
+    setMessageImageError(null)
+    setChat((items) => [...items, { id: optimisticId, role: 'user', text, images }])
     setCodexBusy(true)
     setAgentStage('conversation')
     try {
-      await window.internshipOS.codex.send(text)
+      await window.internshipOS.codex.send(text, images)
       setCodexState(await window.internshipOS.codex.getState())
+    } catch (error) {
+      setCodexBusy(false)
+      setChat((items) => items.filter((item) => item.id !== optimisticId))
+      setMessage((current) => current || text)
+      setMessageImages((current) => current.length > 0 ? current : images)
+      showError(error)
+    }
+  }
+
+  async function addMessageImages(files: File[]): Promise<void> {
+    if (files.length === 0) return
+    const available = MAX_CHAT_IMAGES - messageImages.length
+    if (available <= 0) {
+      setMessageImageError(`Attach up to ${MAX_CHAT_IMAGES} images at a time.`)
+      return
+    }
+
+    const selected = files.slice(0, available)
+    const attachments: AssistantImageAttachment[] = []
+    for (const file of selected) {
+      const mimeType = chatImageMime(file)
+      if (!mimeType) {
+        setMessageImageError('Use PNG, JPEG, GIF, or WebP images.')
+        continue
+      }
+      if (file.size > MAX_CHAT_IMAGE_BYTES) {
+        setMessageImageError(`${file.name || 'That image'} is larger than 15 MB.`)
+        continue
+      }
+      attachments.push({
+        id: crypto.randomUUID(),
+        name: file.name || 'image',
+        dataUrl: await fileDataUrl(file, mimeType)
+      })
+    }
+
+    if (files.length > available) setMessageImageError(`Only the first ${available} image${available === 1 ? '' : 's'} were added.`)
+    else if (attachments.length === selected.length) setMessageImageError(null)
+    if (attachments.length > 0) {
+      setMessageImages((current) => [...current, ...attachments])
+      setAgentStage('conversation')
+    }
+  }
+
+  function removeMessageImage(id: string): void {
+    setMessageImages((current) => current.filter((image) => image.id !== id))
+    setMessageImageError(null)
+  }
+
+  async function stopMessage(): Promise<void> {
+    if (!codexBusy) return
+    try {
+      await window.internshipOS.codex.interrupt()
     } catch (error) {
       setCodexBusy(false)
       showError(error)
@@ -753,6 +970,8 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       setCodexState(conversation.state)
       setChat(conversation.messages)
       setMessage('')
+      setMessageImages([])
+      setMessageImageError(null)
       setHistoryOpen(false)
       setAgentStage('conversation')
     } catch (error) {
@@ -770,6 +989,8 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       setCodexState(conversation.state)
       setChat([])
       setMessage('')
+      setMessageImages([])
+      setMessageImageError(null)
       setHistoryOpen(false)
       setAgentStage('conversation')
     } catch (error) {
@@ -817,6 +1038,8 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     if (providerChanged) {
       setChat([])
       setChatHistory([])
+      setMessageImages([])
+      setMessageImageError(null)
       setAgentStage('hidden')
     }
     setCodexState(await window.internshipOS.codex.connect())
@@ -887,8 +1110,8 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open')
               }}
             >
-              <summary title="Open or create a temporary job-specific resume">
-                {resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : resume?.jobDraft.drafts.length ? `Drafts (${resume.jobDraft.drafts.length})` : 'Drafts'}
+              <summary title={resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : 'Open or create a temporary job-specific resume'}>
+                <span>{resume?.jobDraft.active ? `${resume.jobDraft.name} Draft` : resume?.jobDraft.drafts.length ? `Drafts (${resume.jobDraft.drafts.length})` : 'Drafts'}</span>
               </summary>
               <div className="job-draft-menu-options">
                 <button
@@ -912,7 +1135,10 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
                 ))}
               </div>
             </details>
-            {resume?.jobDraft.active && <button className="stop-draft-action" onClick={() => void selectJobDraft(null)} disabled={busy}>Stop Draft</button>}
+            {resume?.jobDraft.active && <>
+              <button className="stop-draft-action" onClick={() => void selectJobDraft(null)} disabled={busy}>Stop Draft</button>
+              <button className="promote-draft-action" onClick={() => void promoteJobDraft()} disabled={busy} title={`Make this the main ${resume.profileName} resume`}>Make Main</button>
+            </>}
             </>
           ) : (
             <div className="toolbar-title"><strong>Applications</strong><span>{stats.total} total · {stats.submitted} submitted</span></div>
@@ -936,7 +1162,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
             ) : (
               <>
                 <button className="stats-action" onClick={() => setStatsOpen(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7" /></svg>Stats</button>
-                <button className="primary" onClick={() => setEditing({ ...emptyApplication })}>+ Add application</button>
+                <button className="primary" onClick={() => setEditing(newApplicationInput())}>+ Add application</button>
               </>
             )}
           </div>
@@ -992,9 +1218,12 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
               </label>
               <label>
                 Starting template
-                <select value={draftProfileId} onChange={(event) => setDraftProfileId(event.target.value)}>
-                  {resume.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-                </select>
+                <MenuSelect
+                  ariaLabel="Starting resume template"
+                  value={draftProfileId}
+                  options={resume.profiles.map((profile) => ({ value: profile.id, label: profile.name, detail: profile.focus }))}
+                  onChange={setDraftProfileId}
+                />
               </label>
               <div className="draft-dialog-actions">
                 <button type="button" onClick={() => setDraftDialogOpen(false)}>Cancel</button>
@@ -1023,6 +1252,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
               busy={busy}
               onEdit={setEditing}
               onSave={() => void saveApplication()}
+              onSaveInline={saveApplicationInline}
               onRemove={(id) => void removeApplication(id)}
             />
           ) : (
@@ -1044,13 +1274,18 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
           historyOpen={historyOpen}
           historyBusy={historyBusy}
           value={message}
+          images={messageImages}
+          imageError={messageImageError}
           busy={codexBusy}
           onStageChange={setAgentStage}
           onToggleHistory={() => void toggleChatHistory()}
           onOpenChat={(threadId) => void openPreviousChat(threadId)}
           onNewChat={() => void startNewChat()}
           onValueChange={setMessage}
+          onAddImages={(files) => void addMessageImages(files)}
+          onRemoveImage={removeMessageImage}
           onSend={() => void sendMessage()}
+          onStop={() => void stopMessage()}
           onEditModeChange={(mode) => void changeEditMode(mode)}
           onModelChange={(model) => void changeCodexPerformance(model, codexState?.reasoningEffort ?? 'low')}
           onReasoningEffortChange={(effort) => void changeCodexPerformance(codexState?.model ?? 'gpt-5.6-luna', effort)}
@@ -1210,7 +1445,7 @@ function SettingsDialog({ initial, onClose, onSaved }: { initial: OnboardingStat
             {provider !== 'none' && selectedTool && !selectedTool.authenticated && <div className="settings-setup-row"><span>{selectedTool.message}</span><button type="button" onClick={() => void openAssistantSetup()} disabled={busy}>Open setup</button><button type="button" onClick={() => void refreshTools()} disabled={busy}>Check again</button></div>}
             {provider === 'codex' && <CodexPerformanceSettings model={codexModel} effort={codexReasoningEffort} onModelChange={setCodexModel} onEffortChange={setCodexReasoningEffort} />}
             <div className="settings-mode">
-              <button type="button" className={editMode === 'review' ? 'selected' : ''} onClick={() => setEditMode('review')}><strong>Review</strong><span>Apply local edits and show the final diff in chat.</span></button>
+              <button type="button" className={editMode === 'review' ? 'selected' : ''} onClick={() => setEditMode('review')}><strong>Review</strong><span>Apply requested tracker updates immediately; preview other edits for approval.</span></button>
               <button type="button" className={editMode === 'auto' ? 'selected' : ''} onClick={() => setEditMode('auto')}><strong>Auto apply</strong><span>Complete the full local workflow automatically.</span></button>
             </div>
           </section>
@@ -1282,9 +1517,10 @@ function Tracker(props: {
   busy: boolean
   onEdit: (application: ApplicationInput | null) => void
   onSave: () => void
+  onSaveInline: (application: ApplicationInput) => Promise<void>
   onRemove: (id: string) => void
 }): React.JSX.Element {
-  const { applications, editing, busy, onEdit, onSave, onRemove } = props
+  const { applications, editing, busy, onEdit, onSave, onSaveInline, onRemove } = props
   return (
     <div className="page tracker-page">
       {editing && (
@@ -1293,7 +1529,7 @@ function Tracker(props: {
             <label>Company<input value={editing.company} autoFocus onChange={(event) => onEdit({ ...editing, company: event.target.value })} /></label>
             <label>Position<input value={editing.position} onChange={(event) => onEdit({ ...editing, position: event.target.value })} /></label>
             <label>Date Applied<input type="date" value={editing.dateApplied ?? ''} onChange={(event) => onEdit({ ...editing, dateApplied: event.target.value || null })} /></label>
-            <label>Status<select value={editing.status} onChange={(event) => onEdit({ ...editing, status: event.target.value as ApplicationInput['status'] })}>{APPLICATION_STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label>
+            <label>Status<MenuSelect ariaLabel="Application status" value={editing.status} options={APPLICATION_STATUSES.map((status) => ({ value: status, label: status }))} onChange={(value) => onEdit({ ...editing, status: value as ApplicationInput['status'] })} /></label>
             <label className="details-field">Details<textarea value={editing.details} placeholder="URL, location, stage, or notes" onChange={(event) => onEdit({ ...editing, details: event.target.value })} /></label>
           </div>
           <div className="form-actions"><button className="ghost" onClick={() => onEdit(null)}>Cancel</button><button className="primary" disabled={busy} onClick={onSave}>Save</button></div>
@@ -1301,26 +1537,155 @@ function Tracker(props: {
       )}
 
       <div className="table-card">
-        <table>
+        <table className="tracker-table">
           <thead><tr><th>Company</th><th>Position</th><th>Date Applied</th><th>Application Status</th><th>Details</th><th /></tr></thead>
           <tbody>
             {applications.length === 0 ? (
               <tr><td colSpan={6} className="empty">No applications yet. Add one manually or ask your assistant.</td></tr>
             ) : applications.map((application) => (
-              <tr key={application.id} onDoubleClick={() => onEdit(application)}>
-                <td><strong>{application.company}</strong></td>
-                <td>{application.position}</td>
-                <td>{application.dateApplied || '—'}</td>
-                <td><span className={`status ${application.status.toLowerCase().replace(' ', '-')}`}>{application.status}</span></td>
-                <td className="details-cell"><span>{application.details || '—'}</span>{application.submissions.length > 0 && <small>{application.submissions.length} resume snapshot{application.submissions.length === 1 ? '' : 's'}</small>}</td>
-                <td className="row-actions"><button onClick={() => onEdit(application)}>Edit</button><button onClick={() => onRemove(application.id)}>×</button></td>
-              </tr>
+              <InlineApplicationRow
+                application={application}
+                key={application.id}
+                onSave={onSaveInline}
+                onRemove={onRemove}
+              />
             ))}
           </tbody>
         </table>
       </div>
     </div>
   )
+}
+
+function InlineApplicationRow({
+  application,
+  onSave,
+  onRemove
+}: {
+  application: InternshipApplication
+  onSave: (application: ApplicationInput) => Promise<void>
+  onRemove: (id: string) => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState<ApplicationInput>(() => applicationInput(application))
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!dirty && !saving) setDraft(applicationInput(application))
+  }, [application, dirty, saving])
+
+  function update(next: ApplicationInput): void {
+    setDraft(next)
+    setDirty(true)
+    setSaveError(null)
+  }
+
+  async function commit(next: ApplicationInput = draft): Promise<void> {
+    if (!dirty && sameApplicationInput(next, application)) return
+    if (!next.company.trim() || !next.position.trim()) {
+      setSaveError('Company and position are required.')
+      return
+    }
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await onSave(next)
+      setDraft(next)
+      setDirty(false)
+    } catch (error) {
+      setSaveError(errorText(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function updateAndCommit(next: ApplicationInput): void {
+    update(next)
+    void commit(next)
+  }
+
+  return (
+    <tr className={`${dirty ? 'is-dirty' : ''} ${saving ? 'is-saving' : ''} ${saveError ? 'has-error' : ''}`}>
+      <td>
+        <input
+          className="tracker-cell-input company"
+          aria-label={`Company for ${application.company}`}
+          value={draft.company}
+          onChange={(event) => update({ ...draft, company: event.target.value })}
+          onBlur={() => void commit()}
+          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+        />
+      </td>
+      <td>
+        <input
+          className="tracker-cell-input"
+          aria-label={`Position at ${application.company}`}
+          value={draft.position}
+          onChange={(event) => update({ ...draft, position: event.target.value })}
+          onBlur={() => void commit()}
+          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+        />
+      </td>
+      <td>
+        <input
+          className="tracker-cell-input tracker-date-input"
+          type="date"
+          aria-label={`Date applied to ${application.company}`}
+          value={draft.dateApplied ?? ''}
+          onChange={(event) => updateAndCommit({ ...draft, dateApplied: event.target.value || null })}
+        />
+      </td>
+      <td>
+        <MenuSelect
+          ariaLabel={`Application status for ${application.company}`}
+          className={`tracker-status-menu ${draft.status.toLowerCase().replace(' ', '-')}`}
+          compact
+          value={draft.status}
+          options={APPLICATION_STATUSES.map((status) => ({ value: status, label: status }))}
+          onChange={(value) => updateAndCommit({ ...draft, status: value as ApplicationInput['status'] })}
+        />
+      </td>
+      <td className="details-cell">
+        <input
+          className="tracker-cell-input"
+          aria-label={`Details for ${application.company}`}
+          placeholder="Add details"
+          title={draft.details}
+          value={draft.details}
+          onChange={(event) => update({ ...draft, details: event.target.value })}
+          onBlur={() => void commit()}
+          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+        />
+        {application.submissions.length > 0 && <small>{application.submissions.length} resume snapshot{application.submissions.length === 1 ? '' : 's'}</small>}
+      </td>
+      <td className="row-actions">
+        <span className="tracker-save-state" title={saveError ?? (saving ? 'Saving changes…' : dirty ? 'Unsaved changes' : 'Saved')}>
+          {saveError ? '!' : saving ? '•••' : dirty ? '•' : '✓'}
+        </span>
+        <button aria-label={`Remove ${application.company}`} title="Remove application" onClick={() => onRemove(application.id)}>×</button>
+      </td>
+    </tr>
+  )
+}
+
+function applicationInput(application: InternshipApplication): ApplicationInput {
+  return {
+    id: application.id,
+    company: application.company,
+    position: application.position,
+    dateApplied: application.dateApplied,
+    status: application.status,
+    details: application.details
+  }
+}
+
+function sameApplicationInput(input: ApplicationInput, application: InternshipApplication): boolean {
+  return input.company === application.company
+    && input.position === application.position
+    && input.dateApplied === application.dateApplied
+    && input.status === application.status
+    && input.details === application.details
 }
 
 type ApplicationHeatmapDay = {
@@ -1331,6 +1696,9 @@ type ApplicationHeatmapDay = {
 }
 
 function ApplicationStats({ applications, onClose }: { applications: InternshipApplication[]; onClose: () => void }): React.JSX.Element {
+  const heatmapCardRef = useRef<HTMLDivElement>(null)
+  const [selectedDay, setSelectedDay] = useState<ApplicationHeatmapDay | null>(null)
+  const [hoveredDay, setHoveredDay] = useState<{ day: ApplicationHeatmapDay; left: number; top: number } | null>(null)
   const totals = useMemo(() => ({
     total: applications.length,
     inProgress: applications.filter((application) => application.status === 'In Progress').length,
@@ -1341,6 +1709,21 @@ function ApplicationStats({ applications, onClose }: { applications: InternshipA
     const previousMonth = index > 0 ? weeks[index - 1][0].date.getMonth() : -1
     return week[0].date.getMonth() !== previousMonth ? week[0].date.toLocaleDateString(undefined, { month: 'short' }) : ''
   })
+  const selectedApplications = selectedDay
+    ? applications.filter((application) => applicationActivityKey(application) === selectedDay.key)
+    : []
+
+  function showDayTooltip(day: ApplicationHeatmapDay, element: HTMLButtonElement): void {
+    const card = heatmapCardRef.current
+    if (!card) return
+    const cellBounds = element.getBoundingClientRect()
+    const cardBounds = card.getBoundingClientRect()
+    setHoveredDay({
+      day,
+      left: cellBounds.left - cardBounds.left + cellBounds.width / 2,
+      top: cellBounds.top - cardBounds.top - 7
+    })
+  }
 
   return (
     <section className="stats-sheet" role="dialog" aria-modal="true" aria-labelledby="stats-title">
@@ -1353,7 +1736,7 @@ function ApplicationStats({ applications, onClose }: { applications: InternshipA
         <div className="stats-card progress"><span>In progress</span><strong>{totals.inProgress}</strong></div>
         <div className="stats-card rejected"><span>Rejected</span><strong>{totals.rejected}</strong></div>
       </div>
-      <div className="heatmap-card">
+      <div className="heatmap-card" ref={heatmapCardRef}>
         <div className="heatmap-heading"><div><strong>Application activity</strong><span>Last 12 months</span></div><div className="heatmap-legend"><span>Less</span>{[0, 1, 2, 3, 4].map((level) => <i key={level} className={`level-${level}`} />)}<span>More</span></div></div>
         <div className="heatmap-scroll">
           <div className="heatmap-layout">
@@ -1362,15 +1745,46 @@ function ApplicationStats({ applications, onClose }: { applications: InternshipA
             <div className="heatmap-weekdays"><span /><span>Mon</span><span /><span>Wed</span><span /><span>Fri</span><span /></div>
             <div className="application-heatmap">
               {weeks.flat().map((day) => (
-                <i
+                <button
+                  type="button"
                   key={day.key}
-                  className={`level-${Math.min(day.count, 4)} ${day.future ? 'future' : ''}`}
-                  title={`${day.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}: ${day.count} application${day.count === 1 ? '' : 's'}`}
+                  className={`heatmap-day level-${Math.min(day.count, 4)} ${day.future ? 'future' : ''} ${selectedDay?.key === day.key ? 'selected' : ''}`}
+                  aria-label={applicationDayLabel(day)}
+                  onClick={() => setSelectedDay(day)}
+                  onMouseEnter={(event) => showDayTooltip(day, event.currentTarget)}
+                  onMouseLeave={() => setHoveredDay(null)}
+                  onFocus={(event) => showDayTooltip(day, event.currentTarget)}
+                  onBlur={() => setHoveredDay(null)}
                 />
               ))}
             </div>
           </div>
         </div>
+        {hoveredDay && (
+          <div className="heatmap-tooltip" role="tooltip" style={{ left: hoveredDay.left, top: hoveredDay.top }}>
+            {applicationDayLabel(hoveredDay.day)}
+          </div>
+        )}
+        {selectedDay && (
+          <div className="heatmap-selection">
+            <div className="heatmap-selection-heading">
+              <div><strong>{selectedDay.date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</strong><span>{selectedApplications.length} application{selectedApplications.length === 1 ? '' : 's'}</span></div>
+              <button type="button" aria-label="Close selected day" onClick={() => setSelectedDay(null)}>×</button>
+            </div>
+            {selectedApplications.length === 0 ? (
+              <p>No applications recorded for this day.</p>
+            ) : (
+              <div className="heatmap-application-list">
+                {selectedApplications.map((application) => (
+                  <div key={application.id}>
+                    <span><strong>{application.company}</strong><small>{application.position}</small></span>
+                    <i className={`status ${application.status.toLowerCase().replace(' ', '-')}`}>{application.status}</i>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   )
@@ -1379,9 +1793,7 @@ function ApplicationStats({ applications, onClose }: { applications: InternshipA
 function applicationHeatmap(applications: InternshipApplication[]): ApplicationHeatmapDay[][] {
   const counts = new Map<string, number>()
   for (const application of applications) {
-    const key = application.dateApplied && /^\d{4}-\d{2}-\d{2}$/.test(application.dateApplied)
-      ? application.dateApplied
-      : dateKey(new Date(application.createdAt))
+    const key = applicationActivityKey(application)
     if (key) counts.set(key, (counts.get(key) ?? 0) + 1)
   }
 
@@ -1400,6 +1812,17 @@ function applicationHeatmap(applications: InternshipApplication[]): ApplicationH
       return { date, key, count: counts.get(key) ?? 0, future: date > today }
     })
   )
+}
+
+function applicationActivityKey(application: InternshipApplication): string {
+  return application.dateApplied && /^\d{4}-\d{2}-\d{2}$/.test(application.dateApplied)
+    ? application.dateApplied
+    : dateKey(new Date(application.createdAt))
+}
+
+function applicationDayLabel(day: ApplicationHeatmapDay): string {
+  const date = day.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return `${day.count} application${day.count === 1 ? '' : 's'} on ${date}`
 }
 
 function dateKey(date: Date): string {
@@ -1442,93 +1865,94 @@ function parseCompactDiff(diff: string): DiffRow[] {
 
 function inlineDiffExtension(review: ResumeChangeReview): Extension {
   const rows = parseCompactDiff(review.diff)
-  const decorations = ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet
-
-      constructor(view: EditorView) {
-        this.decorations = buildInlineDiffDecorations(view, rows)
-      }
-
-      update(update: ViewUpdate): void {
-        if (update.docChanged) this.decorations = buildInlineDiffDecorations(update.view, rows)
-      }
+  return StateField.define<DecorationSet>({
+    create(state) {
+      return buildInlineDiffDecorations(state, rows)
     },
-    { decorations: (plugin) => plugin.decorations }
-  )
-  const previousVersionTooltip = hoverTooltip((view, position) => {
-    const currentLine = view.state.doc.lineAt(position)
-    const removed = resolvedRemovedGroups(view, rows).get(currentLine.number)
-    if (!removed?.length) return null
-    return {
-      pos: currentLine.from,
-      end: currentLine.to,
-      above: true,
-      create: () => {
-        const tooltip = document.createElement('div')
-        tooltip.className = 'cm-inline-diff-tooltip'
-        const heading = document.createElement('div')
-        heading.className = 'cm-inline-diff-heading'
-        heading.textContent = 'Previous version'
-        tooltip.append(heading)
-        for (const row of removed) {
-          const line = document.createElement('div')
-          line.className = 'cm-inline-diff-previous-line'
-          const number = document.createElement('span')
-          number.textContent = row.oldLine == null ? '' : String(row.oldLine)
-          const marker = document.createElement('span')
-          marker.textContent = '−'
-          const code = document.createElement('code')
-          code.textContent = row.text || ' '
-          line.append(number, marker, code)
-          tooltip.append(line)
-        }
-        return { dom: tooltip }
-      }
-    }
+    update(decorations, transaction) {
+      return transaction.docChanged ? buildInlineDiffDecorations(transaction.state, rows) : decorations
+    },
+    provide: (field) => EditorView.decorations.from(field)
   })
-  return [decorations, previousVersionTooltip]
 }
 
-function buildInlineDiffDecorations(view: EditorView, rows: DiffRow[]): DecorationSet {
+class RemovedDiffWidget extends WidgetType {
+  constructor(private readonly rows: DiffRow[]) {
+    super()
+  }
+
+  eq(other: RemovedDiffWidget): boolean {
+    return this.rows.length === other.rows.length && this.rows.every((row, index) => {
+      const compared = other.rows[index]
+      return row.text === compared.text && row.oldLine === compared.oldLine
+    })
+  }
+
+  toDOM(): HTMLElement {
+    const block = document.createElement('div')
+    block.className = 'cm-inline-diff-deleted-block'
+    block.setAttribute('aria-label', 'Deleted lines from previous version')
+    for (const row of this.rows) {
+      const line = document.createElement('div')
+      line.className = 'cm-inline-diff-deleted-line'
+      const number = document.createElement('span')
+      number.textContent = row.oldLine == null ? '' : String(row.oldLine)
+      const marker = document.createElement('span')
+      marker.textContent = '−'
+      const code = document.createElement('code')
+      code.textContent = row.text || ' '
+      line.append(number, marker, code)
+      block.append(line)
+    }
+    return block
+  }
+
+  ignoreEvent(): boolean {
+    return true
+  }
+}
+
+function buildInlineDiffDecorations(state: EditorState, rows: DiffRow[]): DecorationSet {
   const ranges: Range<Decoration>[] = []
   const lines = new Map<number, Set<string>>()
 
   for (const row of rows) {
     if (row.type === 'added' && row.newLine != null) {
-      const lineNumber = locateDiffLine(view, row.newLine, row.text)
+      const lineNumber = locateDiffLine(state, row.newLine, row.text)
       if (lineNumber != null) lines.set(lineNumber, new Set([...(lines.get(lineNumber) ?? []), 'cm-diff-added-line']))
     }
   }
 
-  for (const lineNumber of resolvedRemovedGroups(view, rows).keys()) {
+  for (const [lineNumber, removed] of resolvedRemovedGroups(state, rows)) {
     const classes = lines.get(lineNumber) ?? new Set<string>()
-    classes.add(classes.has('cm-diff-added-line') ? 'cm-diff-has-previous' : 'cm-diff-deletion-anchor')
+    if (!classes.has('cm-diff-added-line')) classes.add('cm-diff-deletion-anchor')
     lines.set(lineNumber, classes)
+    const line = state.doc.line(lineNumber)
+    ranges.push(Decoration.widget({ widget: new RemovedDiffWidget(removed), block: true, side: -1 }).range(line.from))
   }
 
   for (const [lineNumber, classes] of lines) {
-    const line = view.state.doc.line(lineNumber)
+    const line = state.doc.line(lineNumber)
     ranges.push(Decoration.line({ attributes: { class: [...classes].join(' ') } }).range(line.from))
   }
   return Decoration.set(ranges, true)
 }
 
-function resolvedRemovedGroups(view: EditorView, rows: DiffRow[]): Map<number, DiffRow[]> {
+function resolvedRemovedGroups(state: EditorState, rows: DiffRow[]): Map<number, DiffRow[]> {
   const groups = new Map<number, DiffRow[]>()
   const addedByExpectedLine = new Map(rows.filter((row) => row.type === 'added' && row.newLine != null).map((row) => [row.newLine!, row]))
   for (const row of rows) {
     if (row.type !== 'removed') continue
     const expected = Math.max(1, row.anchorLine ?? 1)
     const added = addedByExpectedLine.get(expected)
-    const resolved = added ? locateDiffLine(view, expected, added.text) : Math.min(view.state.doc.lines, expected)
+    const resolved = added ? locateDiffLine(state, expected, added.text) : Math.min(state.doc.lines, expected)
     if (resolved != null) groups.set(resolved, [...(groups.get(resolved) ?? []), row])
   }
   return groups
 }
 
-function locateDiffLine(view: EditorView, expected: number, text: string): number | null {
-  const document = view.state.doc
+function locateDiffLine(state: EditorState, expected: number, text: string): number | null {
+  const document = state.doc
   const clamped = Math.min(document.lines, Math.max(1, expected))
   if (document.line(clamped).text === text) return clamped
   for (let distance = 1; distance <= 4; distance += 1) {
@@ -1682,7 +2106,7 @@ function ResumeStudio(props: {
               <button onClick={() => void window.internshipOS.resume.revealPdf()}>Reveal file</button>
             </div>
           </div>
-          {resume?.pdfRevision ? <PdfPreview revision={resume.pdfRevision} /> : <div className="pdf-empty">Compile successfully to create the one-page preview.</div>}
+          {resume?.pdfRevision ? <PdfPreview revision={resume.pdfRevision} /> : <div className="pdf-empty">Compile successfully to create the PDF preview.</div>}
         </div>
       </div>
     </div>
@@ -1831,7 +2255,7 @@ function TerminalActivityLine({ activity }: { activity: CodexActivity }): React.
   const preview = activityPreview(activity)
   const outputLines = activity.output ? activity.output.split(/\r?\n/).filter(Boolean).length : 0
   const metadata = [activity.durationMs != null ? formatActivityDuration(activity.durationMs) : '', activity.exitCode != null ? `exit ${activity.exitCode}` : '', outputLines ? `${outputLines} ${outputLines === 1 ? 'line' : 'lines'}` : ''].filter(Boolean).join(' · ')
-  const expandable = Boolean(activity.output || activity.detail || activity.text.includes('\n') || activity.text.length > 150)
+  const expandable = Boolean(activity.output || activity.detail || activity.action || activity.text.includes('\n') || activity.text.length > 150)
   const heading = <><span className="terminal-status">{activity.status === 'running' ? '◐' : activity.status === 'failed' ? '×' : '✓'}</span><strong>{activity.title}</strong><span className="terminal-preview">{preview}</span>{metadata && <span className="terminal-meta">{metadata}</span>}{expandable && <i>›</i>}</>
 
   if (!expandable) return <div className={`terminal-activity-line ${activity.status}`}>{heading}</div>
@@ -1842,6 +2266,7 @@ function TerminalActivityLine({ activity }: { activity: CodexActivity }): React.
         {activity.detail && <span>{activity.detail}</span>}
         {activity.text && <pre>{activity.text}</pre>}
         {activity.output && <pre className="terminal-output">{activity.output}</pre>}
+        {activity.action && <button className="terminal-activity-action" onClick={() => window.open(activity.action!.url, '_blank')}>{activity.action.label}</button>}
       </div>
     </details>
   )
@@ -1885,13 +2310,18 @@ function CodexLauncher(props: {
   historyOpen: boolean
   historyBusy: boolean
   value: string
+  images: AssistantImageAttachment[]
+  imageError: string | null
   busy: boolean
   onStageChange: (stage: AgentStage) => void
   onToggleHistory: () => void
   onOpenChat: (threadId: string) => void
   onNewChat: () => void
   onValueChange: (value: string) => void
+  onAddImages: (files: File[]) => void
+  onRemoveImage: (id: string) => void
   onSend: () => void
+  onStop: () => void
   onEditModeChange: (mode: CodexEditMode) => void
   onModelChange: (model: string) => void
   onReasoningEffortChange: (effort: CodexReasoningEffort) => void
@@ -1899,8 +2329,9 @@ function CodexLauncher(props: {
   onOpenSettings: () => void
   onReconnect: () => void
 }): React.JSX.Element {
-  const { inputRef, stage, context, state, items, history, historyOpen, historyBusy, value, busy, onStageChange, onToggleHistory, onOpenChat, onNewChat, onValueChange, onSend, onEditModeChange, onModelChange, onReasoningEffortChange, onOpenProfile, onOpenSettings, onReconnect } = props
+  const { inputRef, stage, context, state, items, history, historyOpen, historyBusy, value, images, imageError, busy, onStageChange, onToggleHistory, onOpenChat, onNewChat, onValueChange, onAddImages, onRemoveImage, onSend, onStop, onEditModeChange, onModelChange, onReasoningEffortChange, onOpenProfile, onOpenSettings, onReconnect } = props
   const feedRef = useRef<HTMLDivElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const feedWasVisibleRef = useRef(false)
   const followLatestRef = useRef(true)
 
@@ -1930,13 +2361,47 @@ function CodexLauncher(props: {
   if (state?.provider === 'none') return <></>
 
   function send(): void {
-    if (!value.trim() || busy || !state?.authenticated) return
+    if ((!value.trim() && images.length === 0) || busy || !state?.authenticated) return
     onStageChange('conversation')
     onSend()
   }
 
+  function addFiles(files: FileList | File[]): void {
+    const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(file.name))
+    if (imageFiles.length === 0) return
+    onAddImages(imageFiles)
+    onStageChange('conversation')
+  }
+
+  function attachmentButton(className = ''): React.JSX.Element {
+    return (
+      <button
+        type="button"
+        className={`codex-attach ${className}`.trim()}
+        aria-label="Attach images"
+        title="Attach images"
+        disabled={busy || !state?.authenticated || images.length >= MAX_CHAT_IMAGES}
+        onClick={() => imageInputRef.current?.click()}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 12.5l5.8-5.8a3 3 0 014.2 4.2l-7.4 7.4a5 5 0 01-7.1-7.1l7.1-7.1a2 2 0 012.8 2.8l-7.1 7.1a1 1 0 001.4 1.4l6.4-6.4" /></svg>
+      </button>
+    )
+  }
+
   return (
     <div className={`codex-layer ${stage}`}>
+      <input
+        ref={imageInputRef}
+        className="codex-image-input"
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        tabIndex={-1}
+        onChange={(event) => {
+          if (event.target.files) addFiles(event.target.files)
+          event.target.value = ''
+        }}
+      />
       {stage === 'compose' && (
         <section className="codex-quick" aria-label={`${providerName} quick prompt`}>
           <span className="agent-mark"><Icon name="codex" /></span>
@@ -1968,9 +2433,10 @@ function CodexLauncher(props: {
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6M12 7.5V12l3 1.8" /></svg>
           </button>
+          {attachmentButton('quick')}
           <button className={`codex-dock-status ${!state?.authenticated ? 'offline' : busy ? 'working' : ''}`} aria-label={`${providerName} is ${status}`} title={status} onClick={() => onStageChange('conversation')}><i /></button>
           <button className="codex-quick-close" aria-label={`Hide ${providerName}`} title={`Hide ${providerName} (Esc)`} onClick={() => onStageChange('hidden')}>×</button>
-          <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
+          <button className="codex-send" aria-label="Send message" disabled={(!value.trim() && images.length === 0) || busy || !state?.authenticated} onClick={send}>↑</button>
         </section>
       )}
       {stage === 'conversation' && (
@@ -1990,11 +2456,11 @@ function CodexLauncher(props: {
           </header>
           <div className="codex-control-bar">
             {state?.provider === 'codex' && <>
-              <label><span>Model</span><select aria-label="Codex model" value={state.model ?? 'gpt-5.6-luna'} disabled={busy} onChange={(event) => onModelChange(event.target.value)}>{CODEX_MODEL_OPTIONS.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}</select></label>
-              <label><span>Reasoning</span><select aria-label="Codex reasoning" value={state.reasoningEffort ?? 'low'} disabled={busy} onChange={(event) => onReasoningEffortChange(event.target.value as CodexReasoningEffort)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+              <label><span>Model</span><MenuSelect className="codex-model-menu" compact ariaLabel="Codex model" value={state.model ?? 'gpt-5.6-luna'} disabled={busy} options={CODEX_MODEL_OPTIONS.map((model) => ({ value: model.id, label: model.name, detail: `${model.id} · ${model.description}` }))} onChange={onModelChange} /></label>
+              <label><span>Reasoning</span><MenuSelect className="codex-reasoning-menu" compact ariaLabel="Codex reasoning" value={state.reasoningEffort ?? 'low'} disabled={busy} options={REASONING_OPTIONS} onChange={(value) => onReasoningEffortChange(value as CodexReasoningEffort)} /></label>
             </>}
             <div className="edit-mode-switch compact" role="group" aria-label={`${providerName} edit mode`}>
-              <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Apply local edits and show the final diff in chat">Review</button>
+              <button disabled={busy} className={mode === 'review' ? 'active' : ''} onClick={() => onEditModeChange('review')} title="Apply requested tracker updates immediately; preview other edits for approval">Review</button>
               <button disabled={busy} className={mode === 'auto' ? 'active auto' : ''} onClick={() => onEditModeChange('auto')} title="Complete the full local workflow automatically">Auto</button>
             </div>
             <button className="profile-button" onClick={onOpenProfile} title="Open the durable local candidate profile">Profile</button>
@@ -2038,7 +2504,18 @@ function CodexLauncher(props: {
                     ) : (
                       <article key={item.id} className={`agent-message ${item.role}`}>
                         <div className="agent-message-role">{item.role === 'user' ? 'You' : item.role === 'assistant' ? providerName : item.role === 'diff' ? 'Changes' : 'Activity'}</div>
-                        <div className="agent-message-body">{item.role === 'diff' ? <CodexDiff diff={item.text} /> : item.role === 'assistant' ? <FormattedAssistantMessage text={item.text} /> : <p>{item.text}</p>}</div>
+                        <div className="agent-message-body">
+                          {item.images && item.images.length > 0 && (
+                            <div className="codex-message-images">
+                              {item.images.map((image) => <img key={image.id} src={image.dataUrl} alt={image.name} title={image.name} />)}
+                            </div>
+                          )}
+                          {item.role === 'diff'
+                            ? <CodexDiff diff={item.text} />
+                            : item.role === 'assistant'
+                              ? <FormattedAssistantMessage text={item.text} />
+                              : item.text ? <p>{item.text}</p> : null}
+                        </div>
                       </article>
                     ))}
                     {busy && !items.some((item) => item.activity?.status === 'running') && <div className="agent-thinking"><span className="agent-mark"><Icon name="codex" /></span><div className="thinking"><span /><span /><span /></div></div>}
@@ -2046,22 +2523,58 @@ function CodexLauncher(props: {
                 </div>
                 {!state?.authenticated && <div className="connect-card codex-connect-card"><p>{state?.error ?? `${providerName} login is required.`}</p><button onClick={onReconnect}>Reconnect</button></div>}
               </div>
-              <footer className="codex-float-composer">
-                <textarea
-                  ref={inputRef}
-                  rows={2}
-                  value={value}
-                  placeholder={`Ask ${providerName}…`}
-                  aria-label={`Message ${providerName}`}
-                  onChange={(event) => onValueChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      send()
-                    }
-                  }}
-                />
-                <button className="codex-send" aria-label="Send message" disabled={!value.trim() || busy || !state?.authenticated} onClick={send}>↑</button>
+              <footer
+                className={`codex-float-composer ${images.length > 0 ? 'has-images' : ''}`}
+                onDragOver={(event) => {
+                  if (Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) event.preventDefault()
+                }}
+                onDrop={(event) => {
+                  if (event.dataTransfer.files.length === 0) return
+                  event.preventDefault()
+                  addFiles(event.dataTransfer.files)
+                }}
+              >
+                <div className="codex-composer-main">
+                  {images.length > 0 && (
+                    <div className="codex-pending-images">
+                      {images.map((image) => (
+                        <div className="codex-pending-image" key={image.id}>
+                          <img src={image.dataUrl} alt="" />
+                          <span title={image.name}>{image.name}</span>
+                          <button type="button" aria-label={`Remove ${image.name}`} title="Remove image" onClick={() => onRemoveImage(image.id)}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="codex-composer-input-row">
+                    {attachmentButton()}
+                    <textarea
+                      ref={inputRef}
+                      rows={2}
+                      value={value}
+                      placeholder={images.length > 0 ? `Ask ${providerName} about the image${images.length === 1 ? '' : 's'}…` : `Ask ${providerName}…`}
+                      aria-label={`Message ${providerName}`}
+                      onChange={(event) => onValueChange(event.target.value)}
+                      onPaste={(event) => {
+                        const files = Array.from(event.clipboardData.files)
+                        if (files.some((file) => file.type.startsWith('image/'))) {
+                          event.preventDefault()
+                          addFiles(files)
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          send()
+                        }
+                      }}
+                    />
+                  </div>
+                  {imageError && <span className="codex-image-error" role="alert">{imageError}</span>}
+                </div>
+                {busy
+                  ? <button className="codex-stop" aria-label={`Stop ${providerName}`} title={`Stop ${providerName}`} onClick={onStop}><span /></button>
+                  : <button className="codex-send" aria-label="Send message" disabled={(!value.trim() && images.length === 0) || !state?.authenticated} onClick={send}>↑</button>}
               </footer>
             </>
           )}

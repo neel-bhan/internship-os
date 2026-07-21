@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ApplicationInput, CodexEditMode, CodexEvent, CodexReasoningEffort, InternshipOsApi } from '../shared/types'
+import type { ApplicationInput, AssistantImageAttachment, CodexEditMode, CodexEvent, CodexReasoningEffort, InternshipOsApi } from '../shared/types'
 
 const api: InternshipOsApi = {
   onboarding: {
@@ -27,6 +27,7 @@ const api: InternshipOsApi = {
     createJobDraft: (name: string, profileId?: string) => ipcRenderer.invoke('resume:create-job-draft', name, profileId),
     selectJobDraft: (draftId: string | null) => ipcRenderer.invoke('resume:select-job-draft', draftId),
     discardJobDraft: (draftId: string) => ipcRenderer.invoke('resume:discard-job-draft', draftId),
+    promoteJobDraft: (source?: string) => ipcRenderer.invoke('resume:promote-job-draft', source),
     saveAndCompile: (source: string) => ipcRenderer.invoke('resume:save-and-compile', source),
     compile: () => ipcRenderer.invoke('resume:compile'),
     undo: () => ipcRenderer.invoke('resume:undo'),
@@ -43,7 +44,8 @@ const api: InternshipOsApi = {
     listChats: () => ipcRenderer.invoke('codex:list-chats'),
     openChat: (threadId: string) => ipcRenderer.invoke('codex:open-chat', threadId),
     newChat: () => ipcRenderer.invoke('codex:new-chat'),
-    send: (text: string) => ipcRenderer.invoke('codex:send', text),
+    send: (text: string, images: AssistantImageAttachment[] = []) => ipcRenderer.invoke('codex:send', text, images),
+    interrupt: () => ipcRenderer.invoke('codex:interrupt'),
     respondToApproval: (requestId, decision) => ipcRenderer.invoke('codex:respond-approval', requestId, decision),
     onEvent: (callback: (event: CodexEvent) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, event: CodexEvent): void => callback(event)

@@ -10,12 +10,13 @@ import type {
 import { AppPaths } from './core/paths'
 import { CodexClient } from './codex-client'
 import { ClaudeClient } from './claude-client'
+import type { StoredAssistantImage } from './core/chat-images'
 
 export interface AssistantClient {
   setEventSink(sink: (event: CodexEvent) => void): void
   getState(): CodexState
   connect(): Promise<CodexState>
-  send(text: string): Promise<void>
+  send(text: string, images?: StoredAssistantImage[]): Promise<void>
   setEditMode(mode: CodexEditMode): CodexState
   setModelSettings(model: string, reasoningEffort: CodexReasoningEffort): Promise<CodexState>
   getProfilePath(): string
@@ -23,6 +24,7 @@ export interface AssistantClient {
   openChat(threadId: string): Promise<CodexConversation>
   newChat(): Promise<CodexConversation>
   respondToApproval(requestId: string | number, decision: 'accept' | 'decline'): void
+  interrupt(): Promise<void>
   stop(): void
 }
 
@@ -47,7 +49,7 @@ class DisabledAssistantClient {
     return { provider: 'none', providerName: 'Assistant', available: false, connected: false, authenticated: false, accountLabel: 'Disabled', threadId: null, editMode: this.editMode, error: 'Choose Codex or Claude in Settings.' }
   }
   async connect(): Promise<CodexState> { return this.getState() }
-  async send(_text: string): Promise<void> { throw new Error('No assistant provider is configured.') }
+  async send(_text: string, _images: StoredAssistantImage[] = []): Promise<void> { throw new Error('No assistant provider is configured.') }
   setEditMode(mode: CodexEditMode): CodexState { this.editMode = mode; return this.getState() }
   async setModelSettings(_model: string, _reasoningEffort: CodexReasoningEffort): Promise<CodexState> { return this.getState() }
   getProfilePath(): string { throw new Error('No assistant provider is configured.') }
@@ -55,5 +57,6 @@ class DisabledAssistantClient {
   async openChat(_threadId: string): Promise<CodexConversation> { throw new Error('No assistant provider is configured.') }
   async newChat(): Promise<{ state: CodexState; messages: [] }> { return { state: this.getState(), messages: [] } }
   respondToApproval(_requestId: string | number, _decision: 'accept' | 'decline'): void {}
+  async interrupt(): Promise<void> { this.sink({ type: 'turn-completed' }) }
   stop(): void { this.sink = () => undefined }
 }

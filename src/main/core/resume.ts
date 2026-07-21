@@ -198,6 +198,49 @@ export class ResumeManager {
     return this.getState()
   }
 
+  async promoteActiveJobDraftToProfile(source?: string): Promise<ResumeState> {
+    this.initialize()
+    const draftId = this.activeJobDraftId()
+    if (!draftId) throw new Error('Open a job draft before making it the main resume.')
+    const draft = this.listJobDrafts(this.activeProfileId).find((item) => item.id === draftId)
+    if (!draft) throw new Error('That job draft no longer exists.')
+
+    const draftSource = source ?? readFileSync(this.paths.jobDraftSourceFile(this.activeProfileId, draftId), 'utf8')
+    const compiledDraft = await this.saveAndCompile(draftSource)
+    if (!compiledDraft.lastCompile?.ok) return compiledDraft
+
+    const profileId = this.activeProfileId
+    const oldMainSource = readFileSync(this.paths.sourceFile(profileId), 'utf8')
+    const promotedSource = readFileSync(this.paths.jobDraftSourceFile(profileId, draftId), 'utf8')
+    const draftPdf = this.paths.jobDraftPdf(profileId, draftId)
+    if (!existsSync(draftPdf)) throw new Error('The draft compiled without a reusable PDF.')
+
+    const snapshotDir = this.createProfilePromotionSnapshot(profileId, draftId)
+    const promotionResult: CompileResult = {
+      ...compiledDraft.lastCompile,
+      message: `${draft.name} is now the ${this.activeProfile().name} main resume.`
+    }
+
+    try {
+      this.replaceDirectory(this.paths.jobDraftSourceDir(profileId, draftId), this.paths.profileDir(profileId))
+      this.atomicCopy(draftPdf, this.paths.profilePdf(profileId))
+      this.atomicCopy(draftPdf, this.paths.previewPdf(profileId))
+
+      this.activeJobDraftIds.delete(profileId)
+      this.writeActiveProfileId()
+      this.recordChangeReview(this.createChangeReview(oldMainSource, promotedSource, promotionResult.compiledAt))
+      this.recordCompile(promotionResult, `Promoted job draft "${draft.name}" (${draftId}) to profile ${profileId}.`)
+
+      rmSync(this.paths.jobDraftDir(profileId, draftId), { recursive: true, force: true })
+      this.syncPublishedPdf()
+      return this.getState(promotionResult)
+    } catch (error) {
+      this.restoreProfilePromotionSnapshot(profileId, draftId, snapshotDir)
+      rmSync(snapshotDir, { recursive: true, force: true })
+      throw error
+    }
+  }
+
   async compile(): Promise<ResumeState> {
     this.initialize()
     return this.compileCandidate(readFileSync(this.activeSourceFile(), 'utf8'), false)
@@ -236,17 +279,35 @@ export class ResumeManager {
     const snapshotDir = join(historyDir, latest)
     const oldSource = join(snapshotDir, 'main.tex')
     const oldPdf = join(snapshotDir, 'current.pdf')
+    const promotionMetadata = join(snapshotDir, 'promotion.json')
     if (!existsSync(oldSource)) throw new Error('Undo snapshot is incomplete.')
 
-    this.atomicCopy(oldSource, this.activeSourceFile())
+    const snapshotSource = join(snapshotDir, 'source')
+    if (existsSync(snapshotSource)) this.replaceDirectory(snapshotSource, this.activeProfileDir())
+    else this.atomicCopy(oldSource, this.activeSourceFile())
     if (existsSync(oldPdf)) {
       this.atomicCopy(oldPdf, this.activeProfilePdf())
       this.atomicCopy(oldPdf, this.activePreviewPdf())
       this.atomicCopy(oldPdf, this.paths.internalPdf)
       this.atomicCopy(oldPdf, this.paths.publicPdf)
+    } else if (existsSync(promotionMetadata)) {
+      rmSync(this.activeProfilePdf(), { force: true })
+      rmSync(this.activePreviewPdf(), { force: true })
     }
     this.atomicWrite(this.activeChangeReviewFile(), 'null')
+
+    if (existsSync(promotionMetadata)) {
+      const promotion = JSON.parse(readFileSync(promotionMetadata, 'utf8')) as { draftId?: string }
+      const archivedDraft = join(snapshotDir, 'promoted-draft')
+      if (promotion.draftId && existsSync(archivedDraft)) {
+        const restoredDraft = this.paths.jobDraftDir(this.activeProfileId, promotion.draftId)
+        if (!existsSync(restoredDraft)) cpSync(archivedDraft, restoredDraft, { recursive: true })
+        this.activeJobDraftIds.set(this.activeProfileId, promotion.draftId)
+        this.writeActiveProfileId()
+      }
+    }
     renameSync(snapshotDir, join(historyDir, `undone-${latest}`))
+    this.syncPublishedPdf()
     return this.getState()
   }
 
@@ -289,18 +350,6 @@ export class ResumeManager {
       const pdf = await PDFDocument.load(bytes)
       const pages = pdf.getPageCount()
       this.atomicCopy(run.pdfPath, this.activePreviewPdf())
-      if (pages !== 1) {
-        result = {
-          ok: false,
-          pages,
-          compiler: run.compiler,
-          message: `Compiled to ${pages} pages. Previewing this candidate.`,
-          errors: ['The upload resume remains the last valid one-page version. Shorten or replace content before publishing this candidate.'],
-          compiledAt: new Date().toISOString()
-        }
-        this.recordCompile(result, run.output)
-        return this.getState(result)
-      }
 
       if (sourceChanged) this.createUndoSnapshot()
       if (sourceChanged) this.atomicWrite(this.activeSourceFile(), source)
@@ -312,7 +361,7 @@ export class ResumeManager {
         ok: true,
         pages,
         compiler: run.compiler,
-        message: `Compiled successfully with ${run.compiler}.`,
+        message: `Compiled successfully with ${run.compiler} (${pages} page${pages === 1 ? '' : 's'}).`,
         errors: [],
         compiledAt: new Date().toISOString()
       }
@@ -429,6 +478,56 @@ export class ResumeManager {
     if (existsSync(this.activeProfilePdf())) cpSync(this.activeProfilePdf(), join(directory, 'current.pdf'))
   }
 
+  private createProfilePromotionSnapshot(profileId: string, draftId: string): string {
+    const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
+    const directory = join(this.paths.historyDir(profileId), id)
+    mkdirSync(directory, { recursive: false })
+    cpSync(this.paths.profileDir(profileId), join(directory, 'source'), { recursive: true })
+    cpSync(this.paths.sourceFile(profileId), join(directory, 'main.tex'))
+    if (existsSync(this.paths.profilePdf(profileId))) cpSync(this.paths.profilePdf(profileId), join(directory, 'current.pdf'))
+    cpSync(this.paths.jobDraftDir(profileId, draftId), join(directory, 'promoted-draft'), { recursive: true })
+    this.atomicWrite(join(directory, 'promotion.json'), JSON.stringify({ version: 1, draftId }, null, 2))
+    return directory
+  }
+
+  private restoreProfilePromotionSnapshot(profileId: string, draftId: string, snapshotDir: string): void {
+    const oldSource = join(snapshotDir, 'source')
+    if (existsSync(oldSource)) this.replaceDirectory(oldSource, this.paths.profileDir(profileId))
+    const oldPdf = join(snapshotDir, 'current.pdf')
+    if (existsSync(oldPdf)) {
+      this.atomicCopy(oldPdf, this.paths.profilePdf(profileId))
+      this.atomicCopy(oldPdf, this.paths.previewPdf(profileId))
+    } else {
+      rmSync(this.paths.profilePdf(profileId), { force: true })
+      rmSync(this.paths.previewPdf(profileId), { force: true })
+    }
+    this.atomicWrite(this.paths.changeReviewFile(profileId), 'null')
+    const archivedDraft = join(snapshotDir, 'promoted-draft')
+    if (!existsSync(this.paths.jobDraftDir(profileId, draftId)) && existsSync(archivedDraft)) {
+      cpSync(archivedDraft, this.paths.jobDraftDir(profileId, draftId), { recursive: true })
+    }
+    this.activeJobDraftIds.set(profileId, draftId)
+    this.writeActiveProfileId()
+    this.syncPublishedPdf()
+  }
+
+  private replaceDirectory(source: string, destination: string): void {
+    const parent = dirname(destination)
+    mkdirSync(parent, { recursive: true })
+    const incoming = join(parent, `.${basename(destination)}.${randomUUID()}.incoming`)
+    const previous = join(parent, `.${basename(destination)}.${randomUUID()}.previous`)
+    cpSync(source, incoming, { recursive: true })
+    try {
+      if (existsSync(destination)) renameSync(destination, previous)
+      renameSync(incoming, destination)
+      rmSync(previous, { recursive: true, force: true })
+    } catch (error) {
+      rmSync(incoming, { recursive: true, force: true })
+      if (!existsSync(destination) && existsSync(previous)) renameSync(previous, destination)
+      throw error
+    }
+  }
+
   private createArchive(
     input: Pick<ApplicationInput, 'company' | 'position'>,
     applicationId: string
@@ -436,7 +535,7 @@ export class ResumeManager {
     this.initialize()
     const profile = this.activeProfile()
     const profilePdf = this.activeProfilePdf()
-    if (!existsSync(profilePdf)) throw new Error('Compile a valid one-page resume before archiving or submitting.')
+    if (!existsSync(profilePdf)) throw new Error('Compile a valid resume before archiving or submitting.')
     const id = randomUUID()
     const createdAt = new Date().toISOString()
     const archivePath = join(this.paths.archivesDir, applicationId, `${createdAt.replace(/[:.]/g, '-')}-${id.slice(0, 8)}`)
