@@ -9,13 +9,17 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "dev": "electron-vite dev",
-    "dev:fresh": "root=$(mktemp -d /tmp/internship-os-fresh.XXXXXX); INTERNSHIP_OS_HOME=\"$root/data\" INTERNSHIP_OS_DOWNLOADS=\"$root/downloads\" electron-vite dev",
+    "dev:fresh": "node scripts/dev-fresh.mjs",
+    "doctor": "tsx scripts/doctor.ts",
     "build": "npm run typecheck && electron-vite build",
     "package:mac": "npm run build && electron-builder --mac dir --publish never",
+    "install:mac": "npm run package:mac && node scripts/install-mac.mjs",
+    "sync:mac": "node scripts/install-mac.mjs",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs run",
     "ios": "ELECTRON_RUN_AS_NODE=1 electron ./node_modules/tsx/dist/cli.mjs src/cli/index.ts",
+    "skills:sync": "node scripts/vendor-resume-skills.mjs",
     "postinstall": "electron-builder install-app-deps"
   },
   "engines": {
@@ -55,6 +59,8 @@
     "files": [
       "out/**/*",
       "main.tex",
+      "resources/assistant-tools/**/*",
+      "resources/resume-skills/**/*",
       "package.json"
     ],
     "mac": {

@@ -1,6 +1,7 @@
 export const APPLICATION_STATUSES = ['Submitted', 'In Progress', 'Rejected'] as const
 
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number]
+export const DEFAULT_APPLICATION_STATUS: ApplicationStatus = 'Submitted'
 
 export interface InternshipApplication {
   id: string
@@ -86,6 +87,7 @@ export interface ToolCheck {
   executable: string | null
   version: string | null
   authenticated?: boolean
+  issue?: 'ready' | 'missing' | 'outdated' | 'signed-out' | 'error'
   message: string
 }
 
@@ -93,6 +95,7 @@ export interface OnboardingState {
   settings: UserSettings
   tools: ToolCheck[]
   legacyDataDetected: boolean
+  freshWorkspace: boolean
 }
 
 export interface OnboardingInput {
@@ -166,6 +169,7 @@ export interface CodexActivity {
   status: CodexActivityStatus
   durationMs?: number
   exitCode?: number
+  action?: { label: string; url: string }
 }
 
 export type CodexEvent =
@@ -204,10 +208,17 @@ export interface CodexChatSummary {
   updatedAt: number
 }
 
+export interface AssistantImageAttachment {
+  id: string
+  name: string
+  dataUrl: string
+}
+
 export interface CodexChatMessage {
   id: string
   role: 'user' | 'assistant' | 'diff' | 'activity'
   text: string
+  images?: AssistantImageAttachment[]
   activity?: CodexActivity
 }
 
@@ -242,6 +253,7 @@ export interface InternshipOsApi {
     createJobDraft(name: string, profileId?: string): Promise<ResumeState>
     selectJobDraft(draftId: string | null): Promise<ResumeState>
     discardJobDraft(draftId: string): Promise<ResumeState>
+    promoteJobDraft(source?: string): Promise<ResumeState>
     saveAndCompile(source: string): Promise<ResumeState>
     compile(): Promise<ResumeState>
     undo(): Promise<ResumeState>
@@ -258,7 +270,8 @@ export interface InternshipOsApi {
     listChats(): Promise<CodexChatSummary[]>
     openChat(threadId: string): Promise<CodexConversation>
     newChat(): Promise<CodexConversation>
-    send(text: string): Promise<void>
+    send(text: string, images?: AssistantImageAttachment[]): Promise<void>
+    interrupt(): Promise<void>
     respondToApproval(requestId: string | number, decision: 'accept' | 'decline'): Promise<void>
     onEvent(callback: (event: CodexEvent) => void): () => void
   }

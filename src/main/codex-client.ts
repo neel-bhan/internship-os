@@ -1,12 +1,109 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import type { CodexActivity, CodexActivityStatus, CodexChatMessage, CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexReasoningEffort, CodexState } from '../shared/types'
+import { storedImagePreview, type StoredAssistantImage } from './core/chat-images'
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
-const THREAD_INSTRUCTION_VERSION = 4
+const THREAD_INSTRUCTION_VERSION = 12
+export const CODEX_APP_SERVER_ARGS = [
+  'app-server',
+  '-c',
+  'sandbox_workspace_write.network_access=true',
+  '-c',
+  'web_search="live"'
+] as const
+
+export function codexWorkspaceSandboxPolicy(root: string, downloadsRoot?: string): {
+  type: 'workspaceWrite'
+  writableRoots: string[]
+  networkAccess: true
+} {
+  const writableRoots = [...new Set([root, downloadsRoot].filter(Boolean).map((path) => resolve(path!)))]
+  return { type: 'workspaceWrite', writableRoots, networkAccess: true }
+}
+
+export function codexTurnModeInstruction(mode: CodexEditMode): string {
+  return mode === 'auto'
+    ? 'AUTO APPLY mode: complete requested resume and tracker edits end-to-end. Maintain the candidate experience bank from clear user-supplied additions, corrections, preferences, and removals without a separate approval step. For resume changes, use the candidate and promote workflow, require successful compilation, and report the page count. Multi-page output is allowed. When the user requests a cover letter, create and verify the PDF, then immediately export it to the configured Downloads folder with the Internship OS artifact command.'
+    : "REVIEW mode: when the user explicitly asks to add, update, or remove an application tracker record, perform that tracker operation immediately through the Internship OS command surface and report the result without requesting separate approval. Candidate experience-bank maintenance supported by the user's current statements is also pre-authorized: apply clear additions, corrections, preferences, and removals immediately. A user-requested cover-letter PDF and its immediate export to the configured Downloads folder through the Internship OS artifact command are also pre-authorized. For resumes, instruction files, and all other persistent edits, inspect the current state, present the exact proposed changes or diff, and wait for the user's explicit approval before editing or promoting. After approval, use the safe candidate and promote workflow, verify successful compilation, and report the page count. Multi-page output is allowed. Do not perform external, destructive, or irreversible actions."
+}
+
+export function findCodexExecutable(environment: NodeJS.ProcessEnv = process.env): string | null {
+  return codexExecutableCandidates(environment).find(existsSync) ?? null
+}
+
+export function codexExecutableCandidates(environment: NodeJS.ProcessEnv = process.env): string[] {
+  const home = environment.HOME || homedir()
+  const nvmRoot = join(home, '.nvm', 'versions', 'node')
+  const nvmCandidates = existsSync(nvmRoot)
+    ? readdirSync(nvmRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(nvmRoot, entry.name, 'bin', 'codex'))
+      .reverse()
+    : []
+  return [...new Set([
+    environment.CODEX_PATH,
+    join(home, '.local', 'bin', 'codex'),
+    join(home, '.volta', 'bin', 'codex'),
+    join(home, '.npm-global', 'bin', 'codex'),
+    join(home, '.bun', 'bin', 'codex'),
+    join(home, 'Library', 'pnpm', 'codex'),
+    join(home, '.asdf', 'shims', 'codex'),
+    join(home, '.local', 'share', 'mise', 'shims', 'codex'),
+    ...nvmCandidates,
+    '/Applications/ChatGPT.app/Contents/Resources/codex',
+    '/Applications/Codex.app/Contents/Resources/codex',
+    '/opt/homebrew/bin/codex',
+    '/usr/local/bin/codex',
+    ...String(environment.PATH ?? '').split(delimiter).filter(Boolean).map((directory) => join(directory, 'codex'))
+  ].filter(Boolean) as string[])]
+}
+
+export interface PluginInstallTarget {
+  pluginName: string
+  remoteMarketplaceName: string
+  pluginId: string
+}
+
+export function codexTurnInput(requestText: string, images: StoredAssistantImage[]): Array<Record<string, unknown>> {
+  return [
+    { type: 'text', text: requestText, text_elements: [] },
+    ...images.map((image) => ({ type: 'localImage', path: image.path, detail: 'auto' }))
+  ]
+}
+
+export function resolvePluginInstallTarget(pluginId: string, installed: any): PluginInstallTarget {
+  const requestedId = pluginId.trim()
+  if (!requestedId) throw new Error('Codex requested a plugin install without a plugin id.')
+  const requestedName = requestedId.split('@', 1)[0]
+  const marketplaces = Array.isArray(installed?.marketplaces) ? installed.marketplaces : []
+  for (const marketplace of marketplaces) {
+    const plugins = Array.isArray(marketplace?.plugins) ? marketplace.plugins : []
+    const plugin = plugins.find((candidate: any) =>
+      String(candidate?.id ?? '') === requestedId ||
+      String(candidate?.name ?? '') === requestedName
+    )
+    if (plugin) {
+      return {
+        pluginName: String(plugin.name ?? requestedName),
+        remoteMarketplaceName: String(marketplace.name),
+        pluginId: String(plugin.id ?? requestedId)
+      }
+    }
+  }
+
+  const separator = requestedId.lastIndexOf('@')
+  const marketplace = separator > 0 ? requestedId.slice(separator + 1).replace(/-remote$/, '') : 'openai-curated'
+  return {
+    pluginName: separator > 0 ? requestedId.slice(0, separator) : requestedId,
+    remoteMarketplaceName: marketplace,
+    pluginId: `${requestedName}@${marketplace}`
+  }
+}
 
 interface RpcMessage {
   id?: string | number
@@ -29,6 +126,7 @@ export class CodexClient {
   private eventSink: EventSink = () => undefined
   private knownThreadIds = new Set<string>()
   private activeItems = new Map<string, any>()
+  private activeTurnId: string | null = null
 
   constructor(
     private readonly projectRoot: string,
@@ -72,7 +170,7 @@ export class CodexClient {
     }
 
     this.eventSink({ type: 'status', text: 'Starting local Codex…' })
-    this.process = spawn(executable, ['app-server'], {
+    this.process = spawn(executable, [...CODEX_APP_SERVER_ARGS], {
       cwd: this.projectRoot,
       env: {
         ...process.env,
@@ -92,6 +190,8 @@ export class CodexClient {
       this.connected = false
       this.authenticated = false
       this.process = null
+      this.activeTurnId = null
+      this.activeItems.clear()
       this.error = `Could not start Codex: ${error.message}`
       for (const pending of this.pending.values()) pending.reject(error)
       this.pending.clear()
@@ -100,6 +200,8 @@ export class CodexClient {
     this.process.on('exit', (code) => {
       this.connected = false
       this.process = null
+      this.activeTurnId = null
+      this.activeItems.clear()
       const error = new Error(`Codex exited${code == null ? '' : ` with code ${code}`}.`)
       for (const pending of this.pending.values()) pending.reject(error)
       this.pending.clear()
@@ -108,7 +210,8 @@ export class CodexClient {
 
     try {
       await this.request('initialize', {
-        clientInfo: { name: 'internship_os', title: 'Internship OS', version: '1.0.0' }
+        clientInfo: { name: 'internship_os', title: 'Internship OS', version: '1.0.0' },
+        capabilities: { experimentalApi: true, requestAttestation: false }
       })
       this.notify('initialized', {})
       this.connected = true
@@ -133,31 +236,32 @@ export class CodexClient {
     return this.getState()
   }
 
-  async send(text: string): Promise<void> {
-    if (!text.trim()) return
+  async send(text: string, images: StoredAssistantImage[] = []): Promise<void> {
+    if (!text.trim() && images.length === 0) return
     const state = await this.connect()
     if (!state.authenticated) throw new Error(state.error ?? 'Codex is not authenticated.')
     const isFirstMessage = !this.threadId
     if (!this.threadId) await this.startThread()
     if (isFirstMessage && this.threadId) {
-      await this.request('thread/name/set', { threadId: this.threadId, name: chatTitle(text) }).catch(() => undefined)
+      const titleSource = text.trim() || `Image: ${images[0]?.name ?? 'attachment'}`
+      await this.request('thread/name/set', { threadId: this.threadId, name: chatTitle(titleSource) }).catch(() => undefined)
     }
 
-    const modeInstruction = this.editMode === 'auto'
-      ? 'AUTO APPLY mode: complete requested resume and tracker edits end-to-end. For resume changes, use the candidate and promote workflow so compilation and one-page validation happen before promotion.'
-      : 'REVIEW mode: make requested local workspace edits immediately without asking for approval, then finish by summarizing the applied changes. Use the safe candidate and promote workflow for resumes. Do not perform external, destructive, or irreversible actions.'
-    const responseInstruction = 'Respond like a normal concise assistant. Never mention the active mode, approval policy, or that files were or were not changed unless an error prevented the request. Lead with the result. Format replacement content with a short descriptive Markdown heading and bullets, followed by at most one brief reason when useful. Do not preface suggestions with “I’d replace”.'
+    const modeInstruction = codexTurnModeInstruction(this.editMode)
+    const responseInstruction = 'Respond naturally and concisely. Lead with the result. Do not discuss internal modes or approval policy unless the user asks or an error blocks the request.'
     const requestText = `[Internship OS behavior]\n${modeInstruction}\n${responseInstruction}\n\n[User request]\n${text}`
 
-    await this.request('turn/start', {
+    if (this.activeTurnId) throw new Error('Codex is already working. Stop the current turn before sending another message.')
+    const result = await this.request('turn/start', {
       threadId: this.threadId,
-      input: [{ type: 'text', text: requestText }],
+      input: codexTurnInput(requestText, images),
       model: this.modelSettings.model,
       effort: this.modelSettings.reasoningEffort,
       cwd: this.projectRoot,
       approvalPolicy: 'never',
-      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.paths.root], networkAccess: false }
+      sandboxPolicy: codexWorkspaceSandboxPolicy(this.paths.root, dirname(this.paths.publicPdf))
     })
+    this.activeTurnId = String(result?.turn?.id ?? '') || this.activeTurnId
   }
 
   setEditMode(mode: CodexEditMode): CodexState {
@@ -218,10 +322,36 @@ export class CodexClient {
     this.write({ id: requestId, result: { decision } })
   }
 
+  async interrupt(): Promise<void> {
+    if (!this.activeTurnId || !this.threadId) {
+      this.activeItems.clear()
+      this.eventSink({ type: 'turn-completed' })
+      return
+    }
+    const turnId = this.activeTurnId
+    this.eventSink({
+      type: 'activity',
+      activity: { id: `interrupt:${turnId}`, kind: 'system', title: 'Stopping Codex', text: 'Interrupting the current turn…', output: '', status: 'running' }
+    })
+    await this.request('turn/interrupt', { threadId: this.threadId, turnId })
+    this.activeTurnId = null
+    for (const item of this.activeItems.values()) {
+      const activity = activityFromThreadItem(item, 'completed')
+      if (activity) this.eventSink({ type: 'activity', activity })
+    }
+    this.activeItems.clear()
+    this.eventSink({
+      type: 'activity',
+      activity: { id: `interrupt:${turnId}`, kind: 'system', title: 'Stopped', text: 'The current Codex turn was interrupted.', output: '', status: 'completed' }
+    })
+    this.eventSink({ type: 'turn-completed' })
+  }
+
   stop(): void {
     this.process?.kill()
     this.process = null
     this.connected = false
+    this.activeTurnId = null
   }
 
   private async requireAuthenticatedConnection(): Promise<void> {
@@ -239,7 +369,7 @@ export class CodexClient {
       threadSource: 'internship_os',
       model: this.modelSettings.model,
       developerInstructions:
-        `Operate the local Internship OS using AGENTS.md. Make requested local workspace edits without approval prompts, use the bundled command surface, rely on resume promotion for compilation and one-page validation, and never invent candidate facts. Read ${JSON.stringify(this.getProfilePath())} before requests that depend on candidate facts or change resume/tracker data; answer simple general questions directly. Persist only explicit candidate facts and corrections. Respond naturally and concisely without mentioning modes, approval policy, or whether files changed unless an error blocked the request. Use clear Markdown headings and bullets for replacement content.`
+        `Operate Internship OS using AGENTS.md for app commands, edit modes, authorized scope, drafts, compilation, promotion, undo, archival behavior, and downloadable-PDF export. Read ${JSON.stringify(this.getProfilePath())} before personalized resume, application, interview, or career work and treat it as the active candidate experience bank. The user's current statement is authoritative: replace conflicting details in the named experience, apply clear additions or removals without separate approval, and never resurrect removed or absent material from old chats, drafts, backups, or inactive profiles. If an existing entry has conflicting versions, do not blend them; use and consolidate a clear later or more-specific correction, asking only when the current version cannot be determined and materially affects the task. Selectively save reusable user-supplied or accepted experience and preferences, but not casual brainstorming, unaccepted suggestions, job-description facts, transient wording, or uncertain guesses. Bank entries are available rather than mandatory: rank them by the current goal, relevance, recency, and user preference; do not repeatedly default to the same older project or re-offer a suggestion the user rejected for that goal. Automatically invoke the best matching installed upstream ResumeSkill and use that skill as the primary authority for resume wording, structure, and content strategy; do not add a separate Internship OS writing formula. When the user requests a cover letter, create and verify the PDF, then immediately export it to the configured Downloads folder with the Internship OS artifact command and return the exported path. Use live web research when current external context would improve the result. Use available plugin-install tooling when the user requests an unavailable integration, and surface any connection step. Never construct versioned plugin-cache paths or repeatedly retry a missing file or optional tool. Answer simple general questions directly.`
     })
     const threadId = String(result.thread.id)
     this.threadId = threadId
@@ -302,7 +432,32 @@ export class CodexClient {
       return
     }
 
+    if (message.id != null && message.method === 'item/tool/call') {
+      void this.handleDynamicToolCall(message)
+      return
+    }
+
+    if (message.id != null && message.method) {
+      const text = `Internship OS does not support the Codex host request \`${message.method}\`.`
+      this.eventSink({
+        type: 'activity',
+        activity: {
+          id: `unsupported:${message.id}`,
+          kind: 'system',
+          title: 'Unsupported Codex request',
+          text,
+          output: formatJson(message.params),
+          status: 'failed'
+        }
+      })
+      this.write({ id: message.id, error: { code: -32601, message: text } })
+      return
+    }
+
     switch (message.method) {
+      case 'turn/started':
+        this.activeTurnId = String(message.params?.turn?.id ?? '') || this.activeTurnId
+        break
       case 'item/agentMessage/delta': {
         const id = String(message.params?.itemId ?? '')
         const item = this.activeItems.get(id)
@@ -394,6 +549,7 @@ export class CodexClient {
         })
         break
       case 'turn/completed': {
+        this.activeTurnId = null
         const completedStatus: CodexActivityStatus = message.params?.turn?.status === 'completed' ? 'completed' : 'failed'
         for (const item of this.activeItems.values()) {
           const activity = activityFromThreadItem(item, completedStatus)
@@ -411,15 +567,79 @@ export class CodexClient {
     }
   }
 
+  private async handleDynamicToolCall(message: RpcMessage): Promise<void> {
+    const requestId = message.id!
+    const tool = String(message.params?.tool ?? '')
+    const activityId = `host-tool:${requestId}`
+    if (tool !== 'request_plugin_install') {
+      const text = `The Codex host tool \`${tool || 'unknown'}\` is not supported by Internship OS.`
+      this.eventSink({
+        type: 'activity',
+        activity: { id: activityId, kind: 'system', title: 'Unsupported Codex tool', text, output: formatJson(message.params?.arguments), status: 'failed' }
+      })
+      this.write({
+        id: requestId,
+        result: { contentItems: [{ type: 'inputText', text }], success: false }
+      })
+      return
+    }
+
+    const argumentsValue = isRecord(message.params?.arguments) ? message.params!.arguments : {}
+    const requestedPluginId = String(argumentsValue.plugin_id ?? argumentsValue.pluginId ?? '').trim()
+    this.eventSink({
+      type: 'activity',
+      activity: { id: activityId, kind: 'tool', title: 'Installing Codex plugin', text: requestedPluginId || 'Resolving requested plugin…', output: '', status: 'running' }
+    })
+
+    try {
+      const installed = await this.request('plugin/installed', {
+        cwds: [this.projectRoot],
+        installSuggestionPluginNames: requestedPluginId ? [requestedPluginId] : []
+      })
+      const target = resolvePluginInstallTarget(requestedPluginId, installed)
+      const result = await this.request('plugin/install', {
+        pluginName: target.pluginName,
+        remoteMarketplaceName: target.remoteMarketplaceName
+      })
+      const apps = (Array.isArray(result?.appsNeedingAuth) ? result.appsNeedingAuth : [])
+        .map((app: any) => String(app?.name ?? '').trim())
+        .filter(Boolean)
+      const setupText = apps.length > 0
+        ? `Installed ${target.pluginId}. Connect ${apps.join(', ')} in the ChatGPT app before first use. Open codex://plugins/${encodeURIComponent(target.pluginId)}.`
+        : `Installed and enabled ${target.pluginId}.`
+      this.eventSink({
+        type: 'activity',
+        activity: {
+          id: activityId,
+          kind: 'tool',
+          title: apps.length > 0 ? 'Plugin installed · connection required' : 'Plugin installed',
+          text: target.pluginId,
+          output: setupText,
+          status: 'completed',
+          action: apps.length > 0
+            ? { label: 'Connect in ChatGPT', url: `codex://plugins/${target.pluginId}` }
+            : undefined
+        }
+      })
+      this.write({
+        id: requestId,
+        result: { contentItems: [{ type: 'inputText', text: setupText }], success: true }
+      })
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error)
+      this.eventSink({
+        type: 'activity',
+        activity: { id: activityId, kind: 'tool', title: 'Plugin install failed', text: requestedPluginId, output: text, status: 'failed' }
+      })
+      this.write({
+        id: requestId,
+        result: { contentItems: [{ type: 'inputText', text: `Plugin installation failed: ${text}` }], success: false }
+      })
+    }
+  }
+
   private findCodex(): string | null {
-    const candidates = [
-      process.env.CODEX_PATH,
-      '/Applications/Codex.app/Contents/Resources/codex',
-      '/opt/homebrew/bin/codex',
-      '/usr/local/bin/codex',
-      ...String(process.env.PATH ?? '').split(delimiter).filter(Boolean).map((directory) => join(directory, 'codex'))
-    ].filter(Boolean) as string[]
-    return candidates.find(existsSync) ?? null
+    return findCodexExecutable()
   }
 
   private settingsPath(): string {
@@ -618,6 +838,10 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : []
 }
 
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
 function finiteNumber(value: unknown): number | undefined {
   if (value == null || value === '') return undefined
   const number = Number(value)
@@ -672,12 +896,19 @@ function messagesFromThread(thread: any): CodexChatMessage[] {
   for (const turn of turns) {
     for (const item of Array.isArray(turn?.items) ? turn.items : []) {
       if (item?.type === 'userMessage') {
-        const text = (Array.isArray(item.content) ? item.content : [])
+        const content = Array.isArray(item.content) ? item.content : []
+        const text = content
           .filter((content: any) => content?.type === 'text' && content.text)
           .map((content: any) => String(content.text))
           .join('\n')
         const request = extractUserRequest(text).trim()
-        if (request) messages.push({ id: String(item.id), role: 'user', text: request })
+        const images = content
+          .filter((contentItem: any) => contentItem?.type === 'localImage' && contentItem.path)
+          .map((contentItem: any) => storedImagePreview(String(contentItem.path)))
+          .filter(Boolean)
+        if (request || images.length > 0) {
+          messages.push({ id: String(item.id), role: 'user', text: request, images })
+        }
       } else if (item?.type === 'agentMessage' && item.text && item.phase !== 'commentary') {
         messages.push({ id: String(item.id), role: 'assistant', text: String(item.text) })
       } else {

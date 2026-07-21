@@ -1,23 +1,30 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import type { RenderProcessGoneDetails } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ApplicationInput, AssistantProviderId, CodexEditMode, CodexReasoningEffort, OnboardingInput, SettingsInput, ToolCheck } from '../shared/types'
+import type { AssistantImageAttachment } from '../shared/types'
 import { ApplicationStore } from './core/database'
+import { ensureCandidateExperienceBank, migrateSplitLegacyData } from './core/data-migration'
+import { persistAssistantImages } from './core/chat-images'
 import { AppPaths } from './core/paths'
 import { ResumeManager } from './core/resume'
 import { SettingsStore } from './core/settings'
-import { createCandidateProfile, createStarterResume, updateCandidateProfile } from './core/templates'
+import { createStarterResume } from './core/templates'
 import { writeAssistantWorkspace } from './core/instructions'
 import { createAssistantClient, type AssistantClient } from './assistant-client'
+import { findCodexExecutable } from './codex-client'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const configuredRoot = process.env.INTERNSHIP_OS_HOME
+const freshWorkspace = process.env.INTERNSHIP_OS_FRESH === '1'
 const canonicalRoot = join(app.getPath('appData'), 'Internship OS')
 const splitLegacyRoot = join(app.getPath('appData'), 'internship-application-os')
-const dataRoot = configuredRoot ?? (existsSync(canonicalRoot) ? canonicalRoot : existsSync(splitLegacyRoot) ? splitLegacyRoot : canonicalRoot)
+if (!configuredRoot) migrateSplitLegacyData(canonicalRoot, splitLegacyRoot)
+const dataRoot = configuredRoot ?? canonicalRoot
 const repositoryTexBin = join(app.getAppPath(), '.tools', 'tinytex', 'TinyTeX', 'bin', 'universal-darwin')
 if (!process.env.INTERNSHIP_OS_TEX_BIN && existsSync(join(repositoryTexBin, 'latexmk'))) process.env.INTERNSHIP_OS_TEX_BIN = repositoryTexBin
 app.setPath('userData', dataRoot)
@@ -48,9 +55,21 @@ function createWindow(): void {
     }
   })
   mainWindow = window
+  let lastRendererRecovery = 0
   window.once('closed', () => { if (mainWindow === window) mainWindow = null })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    recordRendererCrash(details)
+    if (details.reason === 'clean-exit' || window.isDestroyed() || mainWindow !== window) return
+
+    const now = Date.now()
+    if (now - lastRendererRecovery < 10_000) return
+    lastRendererRecovery = now
+    setTimeout(() => {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.reload()
+    }, 100)
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url)
+    if (url.startsWith('https://') || url.startsWith('codex://plugins/')) void shell.openExternal(url)
     return { action: 'deny' }
   })
   if (process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -58,7 +77,6 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  if (!configuredRoot && dataRoot === canonicalRoot) migrateSplitLegacyData(canonicalRoot, splitLegacyRoot)
   settingsStore = new SettingsStore(dataRoot)
   if (settingsStore.get().onboardingComplete) initializeRuntime()
   registerIpc()
@@ -66,7 +84,20 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+if (freshWorkspace) {
+  const developmentParentPid = Number(process.env.INTERNSHIP_OS_LAUNCHER_PID) || process.ppid
+  const parentMonitor = setInterval(() => {
+    try { process.kill(developmentParentPid, 0) } catch { app.quit() }
+  }, 500)
+  parentMonitor.unref()
+  app.once('quit', () => {
+    if (!configuredRoot) return
+    const disposableRoot = dirname(configuredRoot)
+    if (basename(disposableRoot).startsWith('internship-os-fresh.')) rmSync(disposableRoot, { recursive: true, force: true })
+  })
+}
+
+app.on('window-all-closed', () => { if (freshWorkspace || process.platform !== 'darwin') app.quit() })
 app.on('before-quit', () => shutdownRuntime())
 
 function initializeRuntime(seedSource?: string): void {
@@ -82,17 +113,20 @@ function initializeRuntime(seedSource?: string): void {
     writeFileSync(paths.sourceFile(firstProfile.id), seedSource)
   }
 
-  const candidateProfile = join(paths.root, 'candidate-profile.md')
-  if (!existsSync(candidateProfile)) writeFileSync(candidateProfile, createCandidateProfile(settings.identity, settings.resumeProfiles))
+  ensureCandidateExperienceBank(paths.root, settings.identity, settings.resumeProfiles)
 
   const workspaceRoot = join(paths.root, 'assistant-workspace')
+  const workspaceDownloadsRoot = join(workspaceRoot, '.downloads')
   const cliPath = join(currentDirectory, 'cli.js')
   cliWrapperPath = writeAssistantWorkspace(workspaceRoot, settings.resumeProfiles, {
     electronPath: process.execPath,
     cliPath,
     appRoot: paths.root,
-    downloadsRoot,
+    downloadsRoot: workspaceDownloadsRoot,
+    publicDownloadsRoot: downloadsRoot,
     defaultResumePath: defaultSource,
+    skillsSourcePath: join(app.getAppPath(), 'resources', 'resume-skills'),
+    assistantToolsSourcePath: join(app.getAppPath(), 'resources', 'assistant-tools'),
     texBinPath: process.env.INTERNSHIP_OS_TEX_BIN
   })
 
@@ -119,7 +153,7 @@ function shutdownRuntime(): void {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('onboarding:get-state', () => ({ settings: settingsStore.get(), tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }))
+  ipcMain.handle('onboarding:get-state', () => onboardingState())
   ipcMain.handle('onboarding:refresh-tools', () => checkTools())
   ipcMain.handle('onboarding:choose-resume-file', async () => {
     const result = await dialog.showOpenDialog({ title: 'Import LaTeX Resume', properties: ['openFile'], filters: [{ name: 'LaTeX', extensions: ['tex'] }] })
@@ -132,9 +166,9 @@ function registerIpc(): void {
     const settings = settingsStore.complete(input)
     const source = input.resumeSource?.trim() || createStarterResume(settings.identity)
     initializeRuntime(wasComplete ? undefined : source)
-    return { settings, tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }
+    return onboardingState(settings)
   })
-  ipcMain.handle('settings:get', () => ({ settings: settingsStore.get(), tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }))
+  ipcMain.handle('settings:get', () => onboardingState())
   ipcMain.handle('settings:save', (_event, input: SettingsInput) => saveUserSettings(input))
 
   ipcMain.handle('applications:list', () => requireStore().list())
@@ -169,6 +203,7 @@ function registerIpc(): void {
   ipcMain.handle('resume:create-job-draft', (_event, name: string, profileId?: string) => requireResume().createJobDraft(name, profileId))
   ipcMain.handle('resume:select-job-draft', (_event, draftId: string | null) => requireResume().selectJobDraft(draftId))
   ipcMain.handle('resume:discard-job-draft', (_event, draftId: string) => requireResume().discardJobDraft(draftId))
+  ipcMain.handle('resume:promote-job-draft', (_event, source?: string) => requireResume().promoteActiveJobDraftToProfile(source))
   ipcMain.handle('resume:save-and-compile', (_event, source: string) => requireResume().saveAndCompile(source))
   ipcMain.handle('resume:compile', () => requireResume().compile())
   ipcMain.handle('resume:undo', () => requireResume().undo())
@@ -193,11 +228,19 @@ function registerIpc(): void {
   ipcMain.handle('codex:list-chats', () => requireAssistant().listChats())
   ipcMain.handle('codex:open-chat', (_event, threadId: string) => requireAssistant().openChat(threadId))
   ipcMain.handle('codex:new-chat', () => requireAssistant().newChat())
-  ipcMain.handle('codex:send', (_event, text: string) => requireAssistant().send(text))
+  ipcMain.handle('codex:send', (_event, text: string, images: AssistantImageAttachment[] = []) => {
+    const storedImages = persistAssistantImages(requirePaths().root, images)
+    return requireAssistant().send(text, storedImages)
+  })
+  ipcMain.handle('codex:interrupt', () => requireAssistant().interrupt())
   ipcMain.handle('codex:respond-approval', (_event, requestId: string | number, decision: 'accept' | 'decline') => requireAssistant().respondToApproval(requestId, decision))
 }
 
-function saveUserSettings(input: SettingsInput): { settings: ReturnType<SettingsStore['get']>; tools: ToolCheck[]; legacyDataDetected: boolean } {
+function onboardingState(settings = settingsStore.get()): { settings: ReturnType<SettingsStore['get']>; tools: ToolCheck[]; legacyDataDetected: boolean; freshWorkspace: boolean } {
+  return { settings, tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected, freshWorkspace }
+}
+
+function saveUserSettings(input: SettingsInput): { settings: ReturnType<SettingsStore['get']>; tools: ToolCheck[]; legacyDataDetected: boolean; freshWorkspace: boolean } {
   const previous = settingsStore.get()
   const activePaths = paths
   const activeResume = resume
@@ -216,12 +259,9 @@ function saveUserSettings(input: SettingsInput): { settings: ReturnType<Settings
     }
   }
 
-  const candidateProfile = join(dataRoot, 'candidate-profile.md')
-  if (existsSync(candidateProfile)) {
-    writeFileSync(candidateProfile, updateCandidateProfile(readFileSync(candidateProfile, 'utf8'), settings.identity, settings.resumeProfiles))
-  }
+  ensureCandidateExperienceBank(dataRoot, settings.identity, settings.resumeProfiles)
   initializeRuntime()
-  return { settings, tools: checkTools(), legacyDataDetected: settingsStore.legacyDataDetected }
+  return onboardingState(settings)
 }
 
 function checkTools(): ToolCheck[] {
@@ -230,33 +270,40 @@ function checkTools(): ToolCheck[] {
 
 function checkTool(id: 'codex' | 'claude'): ToolCheck {
   const executable = findExecutable(id)
-  if (!executable) return { id, available: false, executable: null, version: null, authenticated: false, message: `${id === 'codex' ? 'Codex' : 'Claude Code'} is not installed.` }
-  const version = spawnSync(executable, ['--version'], { encoding: 'utf8', timeout: 5000 }).stdout.trim() || null
+  if (!executable) return { id, available: false, executable: null, version: null, authenticated: false, issue: 'missing', message: `${id === 'codex' ? 'Codex' : 'Claude Code'} is not installed.` }
+  const versionResult = spawnSync(executable, ['--version'], { encoding: 'utf8', timeout: 5000 })
+  const version = versionResult.stdout.trim() || null
+  if (versionResult.status !== 0) return { id, available: true, executable, version, authenticated: false, issue: 'error', message: `${id === 'codex' ? 'Codex' : 'Claude Code'} was found but could not start.` }
   if (id === 'codex') {
+    const appServer = spawnSync(executable, ['app-server', '--help'], { encoding: 'utf8', timeout: 5000 })
+    if (appServer.status !== 0) {
+      return { id, available: true, executable, version, authenticated: false, issue: 'outdated', message: `Codex ${version ?? ''} is too old for Internship OS. Update Codex.`.replace(/\s+/g, ' ').trim() }
+    }
     const status = spawnSync(executable, ['login', 'status'], { encoding: 'utf8', timeout: 5000 })
     const authenticated = status.status === 0
-    return { id, available: true, executable, version, authenticated, message: authenticated ? 'Codex is ready.' : 'Run Codex login to continue.' }
+    return { id, available: true, executable, version, authenticated, issue: authenticated ? 'ready' : 'signed-out', message: authenticated ? `Codex is ready${version ? ` (${version})` : ''}.` : 'Codex is installed but not signed in.' }
   }
   try {
     const status = spawnSync(executable, ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 5000 })
     const authenticated = Boolean(JSON.parse(status.stdout || '{}').loggedIn)
-    return { id, available: true, executable, version, authenticated, message: authenticated ? 'Claude is ready.' : 'Run Claude to sign in.' }
+    return { id, available: true, executable, version, authenticated, issue: authenticated ? 'ready' : 'signed-out', message: authenticated ? 'Claude is ready.' : 'Run Claude to sign in.' }
   } catch {
-    return { id, available: true, executable, version, authenticated: false, message: 'Run Claude to sign in.' }
+    return { id, available: true, executable, version, authenticated: false, issue: 'signed-out', message: 'Run Claude to sign in.' }
   }
 }
 
 function checkLatex(): ToolCheck {
   for (const command of ['latexmk', 'pdflatex']) {
     const executable = findExecutable(command)
-    if (executable) return { id: 'latex', available: true, executable, version: command, message: `${command} is ready.` }
+    if (executable) return { id: 'latex', available: true, executable, version: command, issue: 'ready', message: `${command} is ready.` }
   }
-  return { id: 'latex', available: false, executable: null, version: null, message: 'Run `npm run setup` to install the local LaTeX toolchain.' }
+  return { id: 'latex', available: false, executable: null, version: null, issue: 'missing', message: 'Run `npm run setup` to install the local LaTeX toolchain.' }
 }
 
 function findExecutable(command: string): string | null {
+  if (command === 'codex') return findCodexExecutable()
   const direct = command === 'codex'
-    ? '/Applications/Codex.app/Contents/Resources/codex'
+    ? null
     : command === 'claude'
       ? join(app.getPath('home'), '.local', 'bin', 'claude')
       : command === 'latexmk' || command === 'pdflatex'
@@ -270,26 +317,51 @@ function findExecutable(command: string): string | null {
 async function openAssistantSetup(provider: Exclude<AssistantProviderId, 'none'>): Promise<void> {
   const executable = findExecutable(provider)
   const documentation = provider === 'codex' ? 'https://developers.openai.com/codex/cli' : 'https://docs.anthropic.com/en/docs/claude-code/getting-started'
-  if (!executable) {
+  if (!executable && (provider !== 'codex' || process.platform !== 'darwin')) {
     await shell.openExternal(documentation)
     return
   }
   if (process.platform === 'darwin') {
+    const tool = checkTool(provider)
     const setupPath = join(tmpdir(), `internship-os-${provider}-setup-${crypto.randomUUID()}.command`)
-    const loginCommand = provider === 'codex'
-      ? `${quoteShell(executable)} login`
-      : `${quoteShell(executable)} auth login`
     const providerName = provider === 'codex' ? 'Codex' : 'Claude'
+    const setupCommand = provider === 'codex' && (tool.issue === 'missing' || tool.issue === 'outdated')
+      ? `echo "Installing the current Codex CLI into ~/.local/bin…"
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+install_result=$?
+if [ $install_result -ne 0 ]; then
+  echo "Codex installation failed with exit code $install_result."
+  echo "See ${documentation}"
+  echo "Press any key to close this window."
+  read -k 1
+  exit $install_result
+fi
+CODEX_BIN="$HOME/.local/bin/codex"
+if [ ! -x "$CODEX_BIN" ]; then
+  echo "The installer finished, but Codex was not found at $CODEX_BIN."
+  echo "Run npm run doctor from the Internship OS project for details."
+  echo "Press any key to close this window."
+  read -k 1
+  exit 1
+fi
+echo
+echo "Starting Codex sign-in…"
+"$CODEX_BIN" login`
+      : provider === 'codex'
+        ? `echo "Starting Codex sign-in…"
+${quoteShell(executable!)} login`
+        : `echo "Starting Claude sign-in…"
+${quoteShell(executable!)} auth login`
     writeFileSync(setupPath, `#!/bin/zsh
 rm -f ${quoteShell(setupPath)}
-echo "Starting ${providerName} sign-in…"
-${loginCommand}
+${setupCommand}
 result=$?
 echo
 if [ $result -eq 0 ]; then
   echo "${providerName} sign-in finished. Return to Internship OS and click Check again."
 else
   echo "${providerName} sign-in failed with exit code $result."
+  ${provider === 'codex' ? 'echo "If the browser callback was blocked, run: $HOME/.local/bin/codex login --device-auth"' : ''}
 fi
 echo "Press any key to close this window."
 read -k 1
@@ -317,6 +389,7 @@ async function openResumePdf(reveal: boolean): Promise<void> {
 function requireStore(): ApplicationStore { if (!store) throw new Error('Complete onboarding first.'); return store }
 function requireResume(): ResumeManager { if (!resume) throw new Error('Complete onboarding first.'); return resume }
 function requireAssistant(): AssistantClient { if (!assistant) throw new Error('Complete onboarding first.'); return assistant }
+function requirePaths(): AppPaths { if (!paths) throw new Error('Complete onboarding first.'); return paths }
 
 function validateApplication(input: ApplicationInput): void {
   if (!input.company.trim()) throw new Error('Company is required.')
@@ -329,13 +402,17 @@ function localDate(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-function migrateSplitLegacyData(target: string, source: string): void {
-  if (!existsSync(source) || target === source) return
-  mkdirSync(target, { recursive: true })
-  for (const name of ['candidate-profile.md', 'codex-settings.json', 'codex-thread.json', 'codex-chats.json']) {
-    const from = join(source, name)
-    const to = join(target, name)
-    if (existsSync(from) && !existsSync(to)) cpSync(from, to)
+function recordRendererCrash(details: RenderProcessGoneDetails): void {
+  try {
+    const logDirectory = join(dataRoot, 'logs')
+    mkdirSync(logDirectory, { recursive: true })
+    appendFileSync(
+      join(logDirectory, 'renderer-crashes.jsonl'),
+      `${JSON.stringify({ timestamp: new Date().toISOString(), reason: details.reason, exitCode: details.exitCode })}\n`,
+      { encoding: 'utf8', mode: 0o600 }
+    )
+  } catch {
+    // Logging must never turn a renderer failure into a main-process failure.
   }
 }
 

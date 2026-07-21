@@ -1,0 +1,52 @@
+{
+  "upstream": "https://github.com/Paramchoudhary/ResumeSkills",
+  "commit": "74ae19e7c62b0516d1c298328e5544976c12da5d",
+  "archiveSha256": "32fc24d1c0d3ce819bcd24ff7ceea3ea1d932cfafe6c4eda7de338b2d1f215e9",
+  "skillFilesUnmodified": true,
+  "skillFileSha256": {
+    "academic-cv-builder": "7b15396ae8c284e5cb090d543c8009279269c922f944b2b535089cae0726bd23",
+    "application-form-filler": "c5804ccbc6e34d05edd59a86f3246259a73f96f1fcd7ba253fd9e48c1ddca8d8",
+    "career-changer-translator": "d1b6d39a9031ef2c4b493c6cccf6227144621729f059044173b658200455eecc",
+    "cover-letter-generator": "1b84e3d487f982700ab69fab1cf945fa785bf4a4266e8946e47401b1fe5ebc6c",
+    "creative-portfolio-resume": "71301ed4cc3a4c4b026619d606762b72ac2724888884a711936e7ea85c4a54f5",
+    "executive-resume-writer": "74fc63ac5b836f3bf994a3100c03eb2f3f4a9d67e64cbb0df6e973e06e9d95c0",
+    "interview-prep-generator": "1c543ab0eb226b0e404fcbd4495e7322ae129c5cb940b248ae58656fd2e240d6",
+    "job-description-analyzer": "9898051a4a54ddeb82115778e4dfe24dbf226a6457dcb7be6c94bddca15479d5",
+    "linkedin-profile-optimizer": "3fffcd58f30fe045bcdf7e776417dfccb3061efd3ad15ec537b7e8c285547862",
+    "portfolio-case-study-writer": "b6b17fe94dd87ec68f3818bbfef3ce855a499dba7f1cbb1bb44aa920a9b0f84d",
+    "reference-list-builder": "ef4d0794277724c9476ae4d728a5192d975b64b6b01250cfa0d229839d99349a",
+    "resume-ats-optimizer": "03ad07d45afa209a41f8a0acdfc4286bc61ededd8371ced5242b5caf97d86702",
+    "resume-bullet-writer": "49ea6a533a72112cc4935c40924830d13979b86321e593892a45244fef0a14fb",
+    "resume-formatter": "387522dc9a48ea948fc44c73189fce0676dc12b694186d4d44957ae02bd6becf",
+    "resume-quantifier": "6cdf56f990ff1f67154ea99c256654d35eeb5048f13af76da396dcb3b9d2d68d",
+    "resume-section-builder": "63e9972a7b1b4a184f7f4e7a992f17c3590a0da19a4389631bdbbeb3b94dd68b",
+    "resume-tailor": "96853a389e2043cd3cc46667b89576cd3755bbef2c72ebeafc486230609b0981",
+    "tech-resume-optimizer": "38cbc83d7d143ec3432be19e8179c5992b55b20765c478f575b0200ed357339a"
+  },
+  "included": [
+    "academic-cv-builder",
+    "application-form-filler",
+    "career-changer-translator",
+    "cover-letter-generator",
+    "creative-portfolio-resume",
+    "executive-resume-writer",
+    "interview-prep-generator",
+    "job-description-analyzer",
+    "linkedin-profile-optimizer",
+    "portfolio-case-study-writer",
+    "reference-list-builder",
+    "resume-ats-optimizer",
+    "resume-bullet-writer",
+    "resume-formatter",
+    "resume-quantifier",
+    "resume-section-builder",
+    "resume-tailor",
+    "tech-resume-optimizer"
+  ],
+  "excluded": [
+    "resume-version-manager",
+    "salary-negotiation-prep",
+    "offer-comparison-analyzer",
+    "cold-email-writer"
+  ]
+}

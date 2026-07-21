@@ -1,12 +1,24 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { CodexChatSummary, CodexConversation, CodexEditMode, CodexEvent, CodexReasoningEffort, CodexState } from '../shared/types'
+import { storedImagePreview, type StoredAssistantImage } from './core/chat-images'
 import { AppPaths } from './core/paths'
 
 type EventSink = (event: CodexEvent) => void
-type StoredChat = { id: string; title: string; updatedAt: number; messages: Array<{ id: string; role: 'user' | 'assistant'; text: string }> }
+type StoredChat = {
+  id: string
+  title: string
+  updatedAt: number
+  messages: Array<{ id: string; role: 'user' | 'assistant'; text: string; imagePaths?: string[] }>
+}
+
+export function claudeTurnModeInstruction(mode: CodexEditMode): string {
+  return mode === 'auto'
+    ? 'AUTO APPLY mode. Complete requested changes through the bundled Internship OS command surface and verify the result. Maintain the candidate experience bank from clear user-supplied additions, corrections, preferences, and removals without separate approval. Immediately export user-requested cover-letter PDFs to the configured Downloads folder with the Internship OS artifact command.'
+    : "REVIEW FIRST mode. When the user explicitly asks to add, update, or remove an application tracker record, perform that tracker operation immediately through the Internship OS command surface and report the result without separate approval. Candidate experience-bank maintenance supported by the user's current statements is also pre-authorized: apply clear additions, corrections, preferences, and removals immediately. A user-requested cover-letter PDF and its immediate export to the configured Downloads folder through the Internship OS artifact command are also pre-authorized. For resumes, instruction files, and all other persistent edits, inspect and present the exact proposed changes or diff, then wait for the user's explicit approval."
+}
 
 export class ClaudeClient {
   private process: ChildProcessWithoutNullStreams | null = null
@@ -15,6 +27,7 @@ export class ClaudeClient {
   private threadId: string | null = null
   private error: string | undefined
   private chats: StoredChat[]
+  private interrupted = false
 
   constructor(
     private readonly projectRoot: string,
@@ -51,35 +64,39 @@ export class ClaudeClient {
     return this.getState()
   }
 
-  async send(text: string): Promise<void> {
+  async send(text: string, images: StoredAssistantImage[] = []): Promise<void> {
+    if (!text.trim() && images.length === 0) return
     const executable = this.findClaude()
     if (!executable) throw new Error('Claude Code is not installed.')
     const state = this.getState()
     if (!state.authenticated) throw new Error(state.error ?? 'Claude is not authenticated.')
     if (this.process) throw new Error('Claude is already working.')
 
-    const chat = this.ensureChat(text)
-    chat.messages.push({ id: randomUUID(), role: 'user', text })
+    const chat = this.ensureChat(text.trim() || `Image: ${images[0]?.name ?? 'attachment'}`)
+    chat.messages.push({ id: randomUUID(), role: 'user', text, imagePaths: images.map((image) => image.path) })
     chat.updatedAt = Date.now()
     this.writeChats()
 
-    const modeInstruction = this.editMode === 'auto'
-      ? 'AUTO APPLY mode. Complete requested changes through the bundled Internship OS command surface and verify the result.'
-      : 'REVIEW FIRST mode. Inspect and propose changes, but do not modify resumes, applications, tracker data, or workspace files.'
-    const responseInstruction = 'Respond like a normal concise assistant. Never mention the active mode, approval policy, or that files were or were not changed unless an error prevented the request. Lead with the result. Format replacement content with a short descriptive Markdown heading and bullets, followed by at most one brief reason when useful. Do not preface suggestions with “I’d replace”.'
-    const prompt = `[Internship OS]\nRead AGENTS.md and ${JSON.stringify(join(this.paths.root, 'candidate-profile.md'))}. ${modeInstruction} ${responseInstruction}\n\n[User request]\n${text}`
+    const modeInstruction = claudeTurnModeInstruction(this.editMode)
+    const responseInstruction = 'Respond naturally and concisely. Lead with the result. Do not discuss internal modes or approval policy unless the user asks or an error blocks the request.'
+    const attachmentPrompt = images.length > 0
+      ? `\n\n[Attached images]\n${images.map((image) => `- ${JSON.stringify(image.path)} (${image.name})`).join('\n')}\nRead and inspect every attached image before responding.`
+      : ''
+    const prompt = `[Internship OS]\nRead AGENTS.md and ${JSON.stringify(join(this.paths.root, 'candidate-profile.md'))}. ${modeInstruction} ${responseInstruction}\n\n[User request]\n${text || 'Review the attached image(s).'}${attachmentPrompt}`
     const args = [
       '-p', prompt,
       '--output-format', 'stream-json',
       '--verbose',
-      '--permission-mode', this.editMode === 'auto' ? 'acceptEdits' : 'plan',
+      '--permission-mode', 'acceptEdits',
       '--add-dir', this.paths.root,
-      '--allowedTools', `Read,Edit,Write,Bash(${this.cliWrapperPath} *)`
+      '--add-dir', dirname(this.paths.publicPdf),
+      '--allowedTools', `Read,Edit,Write,WebSearch,WebFetch,Bash(${this.cliWrapperPath} *)`
     ]
     if (chat.messages.length > 1) args.push('--resume', chat.id)
     else args.push('--session-id', chat.id)
 
-    this.process = spawn(executable, args, { cwd: this.projectRoot, env: { ...process.env, INTERNSHIP_OS_HOME: this.paths.root } })
+    this.interrupted = false
+    this.process = spawn(executable, args, { cwd: this.projectRoot, env: { ...process.env, INTERNSHIP_OS_HOME: this.paths.root, INTERNSHIP_OS_PUBLIC_DOWNLOADS: dirname(this.paths.publicPdf) } })
     let finalText = ''
     let buffer = ''
     this.process.stdout.on('data', (chunk) => {
@@ -101,7 +118,14 @@ export class ClaudeClient {
         const parsed = parseClaudeLine(buffer)
         if (parsed) finalText = parsed
       }
-      if (code === 0) {
+      if (this.interrupted) {
+        this.interrupted = false
+        this.eventSink({
+          type: 'activity',
+          activity: { id: `interrupt:${chat.id}`, kind: 'system', title: 'Stopped', text: 'The current Claude turn was interrupted.', output: '', status: 'completed' }
+        })
+        this.eventSink({ type: 'turn-completed' })
+      } else if (code === 0) {
         if (finalText) {
           chat.messages.push({ id: randomUUID(), role: 'assistant', text: finalText })
           chat.updatedAt = Date.now()
@@ -150,7 +174,15 @@ export class ClaudeClient {
     const chat = this.chats.find((item) => item.id === threadId)
     if (!chat) throw new Error('Claude conversation not found.')
     this.threadId = chat.id
-    return { state: this.getState(), messages: chat.messages }
+    return {
+      state: this.getState(),
+      messages: chat.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        images: message.imagePaths?.map(storedImagePreview).filter((image) => image !== null)
+      }))
+    }
   }
 
   async newChat(): Promise<CodexConversation> {
@@ -159,6 +191,15 @@ export class ClaudeClient {
   }
 
   respondToApproval(_requestId: string | number, _decision: 'accept' | 'decline'): void {}
+
+  async interrupt(): Promise<void> {
+    if (!this.process) {
+      this.eventSink({ type: 'turn-completed' })
+      return
+    }
+    this.interrupted = true
+    this.process.kill('SIGTERM')
+  }
 
   stop(): void {
     this.process?.kill()

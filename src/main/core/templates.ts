@@ -1,5 +1,24 @@
 import type { CandidateIdentity, ResumeProfile } from '../../shared/types'
 
+export const CANDIDATE_BANK_GUIDANCE_START = '<!-- internship-os:candidate-experience-bank:start -->'
+export const CANDIDATE_BANK_GUIDANCE_END = '<!-- internship-os:candidate-experience-bank:end -->'
+
+const CANDIDATE_BANK_INTRO = 'This local file is the active experience bank shared across Internship OS assistant chats. It is working memory, not a frozen biography or a chronological log.'
+
+const CANDIDATE_BANK_GUIDANCE = `${CANDIDATE_BANK_GUIDANCE_START}
+## How this experience bank works
+
+- The user's newest statement is authoritative. A correction replaces conflicting details in the named role, project, skill, or preference instead of being appended as another version.
+- When an existing entry already contains directly conflicting versions, do not blend them. Prefer a clear later or more-specific correction and consolidate the entry before using it; ask only when the current version cannot be determined and the difference materially affects the task.
+- If the user asks to remove, delete, or forget something here, remove it from the active bank. Do not recover it from earlier chats, old drafts, backups, inactive resume profiles, or other historical material unless the user explicitly reintroduces it.
+- Use the current request and this active bank for personalized recommendations. The bank is not a limit on new material the user supplies, but items absent from it should not be repeatedly mined from old history.
+- Presence in the bank makes an item available, not mandatory. Rank possible material by the current request, target role, relevance, recency, and the user's stated preferences; use only the smallest strong set. Do not keep defaulting to the same older or more detailed project.
+- If the user rejects or deprioritizes a suggestion for the current goal, do not offer it again for that goal unless the user asks to reconsider it.
+- Add clear, reusable candidate details when the user supplies or accepts them: responsibilities, accomplishments, technologies, projects, education, skills, interests, targets, constraints, and writing preferences. Reusable hypothetical or test material may also be stored when the user asks.
+- Consolidate new details into the relevant entry. Avoid duplicate bullets, contradictory variants, and a stream of dated conversation notes.
+- Do not persist casual brainstorming, unaccepted assistant suggestions, job-description facts, transient wording, or uncertain guesses. If a detail is useful only for the current task, use it without adding it here.
+${CANDIDATE_BANK_GUIDANCE_END}`
+
 export function createStarterResume(identity: CandidateIdentity): string {
   const name = latexEscape(identity.fullName || 'Your Name')
   const contact = [
@@ -36,33 +55,34 @@ Degree and Major \\hfill Expected Graduation
 \\textbf{Role} \\hfill Month Year -- Month Year \\
 \\textit{Organization} \\hfill City, State
 \\begin{itemize}[leftmargin=*, nosep]
-  \\item Replace this text with a verified accomplishment.
-  \\item Keep every claim factual, specific, and concise.
+  \\item Replace this text with a compelling accomplishment.
+  \\item Keep every claim specific and concise.
 \\end{itemize}
 
 \\section{Projects}
 \\textbf{Project Name} $|$ Technologies \\hfill Month Year -- Month Year
 \\begin{itemize}[leftmargin=*, nosep]
-  \\item Describe what you built, how it works, and the verified result.
+  \\item Describe what you built, how it works, and the result.
 \\end{itemize}
 
 \\section{Technical Skills}
-\\textbf{Languages:} Add verified languages here \\
-\\textbf{Tools:} Add verified tools here
+\\textbf{Languages:} Add languages here \\
+\\textbf{Tools:} Add tools here
 \\end{document}
 `
 }
 
 export function createCandidateProfile(identity: CandidateIdentity, profiles: ResumeProfile[]): string {
-  return `# ${identity.fullName || 'Candidate'} — Durable Candidate Profile
+  return `# ${identity.fullName || 'Candidate'} — Candidate Experience Bank
 
-This local file stores verified candidate facts shared across Internship OS assistant chats. Add only facts explicitly supplied by the user or already present in a verified resume.
+${CANDIDATE_BANK_INTRO}
+
+${CANDIDATE_BANK_GUIDANCE}
 
 ## Goal and constraints
 
 - Primary workflow: manage internship applications and tailored resumes.
-- Never invent experience, metrics, dates, skills, credentials, employers, projects, or claims.
-- Keep promoted resumes readable and exactly one page.
+- Keep promoted resumes readable. Page length follows the user's preference.
 
 ## Identity and links
 
@@ -77,17 +97,44 @@ This local file stores verified candidate facts shared across Internship OS assi
 
 ${profiles.map((profile) => `- ${profile.name}: ${profile.focus}`).join('\n')}
 
-## Verified candidate facts
+## Experience bank
 
-- Add verified education, experience, project, skill, preference, and constraint facts here.
+### Education
+
+- Add reusable education details here.
+
+### Work experience
+
+- Add roles, responsibilities, accomplishments, outcomes, and technologies here.
+
+### Projects and leadership
+
+- Add active projects, leadership, research, and extracurricular experience here.
+
+### Skills and technologies
+
+- Add skills the candidate wants available for recommendations here.
+
+## Application and writing preferences
+
+- Add durable role targets, content preferences, exclusions, and constraints here.
 `
 }
 
 export function updateCandidateProfile(source: string, identity: CandidateIdentity, profiles: ResumeProfile[]): string {
-  let updated = source.replace(
-    /^#\s+.+?\s+[—-]\s+Durable Candidate Profile\s*$/m,
-    `# ${identity.fullName || 'Candidate'} — Durable Candidate Profile`
+  const managedGuidancePattern = new RegExp(
+    `${escapeRegExp(CANDIDATE_BANK_GUIDANCE_START)}[\\s\\S]*?${escapeRegExp(CANDIDATE_BANK_GUIDANCE_END)}\\s*`,
+    'g'
   )
+  let updated = source.replace(managedGuidancePattern, '').trim()
+  const title = `# ${identity.fullName || 'Candidate'} — Candidate Experience Bank`
+  if (/^#\s+.+$/m.test(updated)) updated = updated.replace(/^#\s+.+$/m, title)
+  else updated = `${title}\n\n${updated}`
+
+  const firstSection = updated.search(/^##\s+/m)
+  const body = firstSection >= 0 ? updated.slice(firstSection).trim() : ''
+  updated = `${title}\n\n${CANDIDATE_BANK_INTRO}\n\n${CANDIDATE_BANK_GUIDANCE}${body ? `\n\n${body}` : ''}`
+
   const identityBlock = `## Identity and links
 
 - Name: ${identity.fullName}
@@ -118,6 +165,10 @@ ${profiles.map((profile) => `- ${profile.name}: ${profile.focus}`).join('\n')}
       : `${updated.trim()}\n\n${profileBlock}`
   }
   return `${updated.trim()}\n`
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function link(value: string): string {

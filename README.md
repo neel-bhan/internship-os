@@ -8,10 +8,13 @@ Local-first macOS workspace for internship applications, LaTeX resume profiles, 
 git clone https://github.com/neel-bhan/internship-os.git
 cd internship-os
 npm run setup
+npm run doctor
 npm run dev:fresh
 ```
 
 The setup command installs npm dependencies, downloads a verified repository-local TinyTeX pdfLaTeX toolchain for Apple Silicon or Intel macOS, and verifies resume compilation. Resumes compile with their native engine and are never rewritten for compatibility. It requires Node.js 20 or newer. Use `npm run dev:fresh` for a disposable first-run workspace; normal `npm run dev` keeps your usual local data.
+
+`npm run doctor` checks Node, dependencies, LaTeX, a genuinely fresh onboarding state, the Codex executable, Codex sign-in, and the app-server capability Internship OS needs. A fresh window is explicitly labeled **Fresh test**. If it instead reports that the Electron preload bridge did not load, the app now surfaces that failure rather than silently opening a fake preconfigured preview.
 
 Onboarding collects a candidate name and optional links, creates the selected resume profiles, imports an optional `.tex` resume, checks LaTeX and assistant tools, and generates private `AGENTS.md` / `CLAUDE.md` instructions in the local app-data workspace.
 
