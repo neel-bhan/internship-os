@@ -8,7 +8,10 @@
   "type": "module",
   "scripts": {
     "setup": "node scripts/setup.mjs",
+    "ensure:electron": "node scripts/ensure-electron.mjs",
+    "predev": "npm run ensure:electron",
     "dev": "electron-vite dev",
+    "predev:fresh": "npm run ensure:electron",
     "dev:fresh": "node scripts/dev-fresh.mjs",
     "doctor": "tsx scripts/doctor.ts",
     "build": "npm run typecheck && electron-vite build",
@@ -17,7 +20,9 @@
     "sync:mac": "node scripts/install-mac.mjs",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run ensure:electron",
     "test": "ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs run",
+    "preios": "npm run ensure:electron",
     "ios": "ELECTRON_RUN_AS_NODE=1 electron ./node_modules/tsx/dist/cli.mjs src/cli/index.ts",
     "skills:sync": "node scripts/vendor-resume-skills.mjs",
     "postinstall": "electron-builder install-app-deps"

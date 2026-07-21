@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { CodexClient, codexExecutableCandidates, findCodexExecutable } from '../src/main/codex-client'
 import { AppPaths } from '../src/main/core/paths'
 import { SettingsStore } from '../src/main/core/settings'
+import { findElectronExecutable } from './ensure-electron.mjs'
 
 type Check = { label: string; ok: boolean; detail: string }
 const checks: Check[] = []
@@ -12,7 +13,10 @@ const add = (label: string, ok: boolean, detail: string): void => { checks.push(
 
 add('Platform', process.platform === 'darwin', `${process.platform}-${process.arch}`)
 add('Node.js', Number(process.versions.node.split('.')[0]) >= 20, process.versions.node)
-add('Dependencies', existsSync(resolve('node_modules', 'electron', 'package.json')), existsSync(resolve('node_modules')) ? 'installed' : 'missing; run npm run setup')
+const dependenciesInstalled = existsSync(resolve('node_modules', 'electron', 'package.json'))
+const electron = findElectronExecutable(resolve('.'))
+add('Dependencies', dependenciesInstalled, dependenciesInstalled ? 'installed' : 'missing; run npm run setup')
+add('Electron runtime', Boolean(electron), electron ?? 'package found but runtime missing; run npm run setup')
 
 const latex = ['latexmk', 'pdflatex'].map((name) => resolve('.tools', 'tinytex', 'TinyTeX', 'bin', 'universal-darwin', name))
 add('Local LaTeX', latex.every(existsSync), latex.every(existsSync) ? 'repository toolchain found' : 'missing; run npm run setup')
@@ -35,7 +39,9 @@ if (!codex) {
   const version = spawnSync(codex, ['--version'], { encoding: 'utf8', timeout: 5000 })
   const login = spawnSync(codex, ['login', 'status'], { encoding: 'utf8', timeout: 5000 })
   const appServer = spawnSync(codex, ['app-server', '--help'], { encoding: 'utf8', timeout: 5000 })
-  add('Codex executable', version.status === 0, `${codex}${version.stdout.trim() ? ` · ${version.stdout.trim()}` : ''}`)
+  const codexLaunches = version.status === 0 || login.status === 0 || appServer.status === 0
+  const versionLabel = version.status === 0 && version.stdout.trim() ? ` · ${version.stdout.trim()}` : ' · launchable'
+  add('Codex executable', codexLaunches, `${codex}${versionLabel}`)
   add('Codex authentication', login.status === 0, login.status === 0 ? login.stdout.trim() || 'signed in' : 'not signed in; run codex login (or codex login --device-auth)')
   add('Codex app-server', appServer.status === 0, appServer.status === 0 ? 'supported' : 'unsupported; update Codex')
   if (login.status === 0 && appServer.status === 0) {
