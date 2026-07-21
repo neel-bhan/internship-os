@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { ensureElectronInstalled } from './ensure-electron.mjs'
 
 const VERSION = '2026.07'
 const ARCHIVE = `TinyTeX-1-darwin-v${VERSION}.tar.xz`
@@ -21,6 +22,7 @@ if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) {
 }
 
 run('npm', ['install'], 'Installing application dependencies')
+ensureElectronInstalled(root)
 
 const toolDirectory = join(root, '.tools', 'tinytex')
 const distribution = join(toolDirectory, 'TinyTeX')
