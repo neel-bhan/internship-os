@@ -8,6 +8,8 @@ import { indentWithTab } from '@codemirror/commands'
 import { stex } from '@codemirror/legacy-modes/mode/stex'
 import * as pdfjs from 'pdfjs-dist'
 import PdfJsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { CommandPalette } from './CommandPalette'
+import { createAppCommands } from './app-commands'
 import {
   APPLICATION_STATUSES,
   CODEX_MODEL_OPTIONS,
@@ -588,11 +590,19 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
   const [statsOpen, setStatsOpen] = useState(false)
   const [draftDialogOpen, setDraftDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [highlightedApplicationId, setHighlightedApplicationId] = useState<string | null>(null)
   const [settingsState, setSettingsState] = useState(initialSettings)
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [draftProfileId, setDraftProfileId] = useState('general-swe')
   const codexInputRef = useRef<HTMLTextAreaElement>(null)
+  const assistantProvider = codexState?.provider ?? settingsState.settings.assistantProvider
+  const assistantConfigured = assistantProvider !== 'none'
+  const assistantName = codexState?.providerName ?? (assistantProvider === 'codex' ? 'Codex' : assistantProvider === 'claude' ? 'Claude' : 'AI Assistant')
+  const assistantTitle = assistantConfigured
+    ? `${agentStage === 'hidden' ? 'Open' : 'Hide'} ${assistantName} chat (⌥Space)`
+    : 'Set up an AI assistant (⌥Space)'
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -603,6 +613,12 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
   useEffect(() => {
     if (agentStage === 'hidden') setHistoryOpen(false)
   }, [agentStage])
+
+  useEffect(() => {
+    if (!highlightedApplicationId) return
+    const timeout = window.setTimeout(() => setHighlightedApplicationId(null), 2200)
+    return () => window.clearTimeout(timeout)
+  }, [highlightedApplicationId])
 
   const refresh = useCallback(async () => {
     const [nextApplications, nextResume] = await Promise.all([
@@ -631,7 +647,11 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
       const command = event.metaKey || event.ctrlKey
-      if (event.key === 'Escape' && draftDialogOpen) {
+      const assistantShortcut = event.altKey && !command && !event.shiftKey && event.code === 'Space'
+      if (event.key === 'Escape' && commandPaletteOpen) {
+        event.preventDefault()
+        setCommandPaletteOpen(false)
+      } else if (event.key === 'Escape' && draftDialogOpen) {
         event.preventDefault()
         setDraftDialogOpen(false)
       } else if (event.key === 'Escape' && statsOpen) {
@@ -643,10 +663,17 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
       } else if (command && event.key === '2') {
         event.preventDefault()
         setView('tracker')
-      } else if ((command && event.key.toLowerCase() === 'k') || (event.altKey && event.code === 'Space')) {
+      } else if (command && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setAgentStage((current) => current === 'hidden' ? (chat.length > 0 ? 'conversation' : 'compose') : current)
-        window.setTimeout(() => codexInputRef.current?.focus(), 0)
+        if (commandPaletteOpen) {
+          setCommandPaletteOpen(false)
+        } else {
+          setAgentStage('hidden')
+          setCommandPaletteOpen(true)
+        }
+      } else if (assistantShortcut) {
+        event.preventDefault()
+        toggleAssistant()
       } else if (event.key === 'Escape' && agentStage !== 'hidden') {
         event.preventDefault()
         setAgentStage('hidden')
@@ -657,7 +684,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [agentStage, chat.length, draftDialogOpen, statsOpen, view, source])
+  }, [agentStage, assistantConfigured, chat.length, commandPaletteOpen, draftDialogOpen, statsOpen, view, source])
 
   const handleCodexEvent = useCallback(
     (event: CodexEvent) => {
@@ -1017,6 +1044,40 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     }
   }
 
+  function closeWorkspaceOverlays(): void {
+    setDraftDialogOpen(false)
+    setStatsOpen(false)
+    setSettingsOpen(false)
+  }
+
+  function showWorkspaceView(nextView: View): void {
+    closeWorkspaceOverlays()
+    setView(nextView)
+  }
+
+  function showApplication(applicationId: string): void {
+    closeWorkspaceOverlays()
+    setEditing(null)
+    setHighlightedApplicationId(applicationId)
+    setView('tracker')
+  }
+
+  async function runResumeCommand(action: 'save' | 'compile' | 'undo' | 'archive'): Promise<void> {
+    showWorkspaceView('resume')
+    await resumeAction(action)
+  }
+
+  function toggleAssistant(): void {
+    setCommandPaletteOpen(false)
+    if (!assistantConfigured) {
+      void openSettings()
+      return
+    }
+    closeWorkspaceOverlays()
+    setAgentStage((current) => current === 'hidden' ? (chat.length > 0 ? 'conversation' : 'compose') : 'hidden')
+    if (agentStage === 'hidden') window.setTimeout(() => codexInputRef.current?.focus(), 0)
+  }
+
   async function openSettings(): Promise<void> {
     setSettingsLoading(true)
     try {
@@ -1057,6 +1118,82 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
     }),
     [applications]
   )
+
+  const commandItems = createAppCommands({
+    applications,
+    resume,
+    busy,
+    theme,
+    assistantName,
+    assistantConfigured,
+    assistantReady: Boolean(codexState?.authenticated),
+    assistantBusy: codexBusy || historyBusy,
+    actions: {
+      showResume: () => showWorkspaceView('resume'),
+      showTracker: () => showWorkspaceView('tracker'),
+      openSettings: () => {
+        closeWorkspaceOverlays()
+        void openSettings()
+      },
+      openStats: () => {
+        closeWorkspaceOverlays()
+        setView('tracker')
+        setStatsOpen(true)
+      },
+      toggleTheme: () => setTheme((current) => current === 'dark' ? 'light' : 'dark'),
+      openAssistant: toggleAssistant,
+      startNewChat: async () => {
+        closeWorkspaceOverlays()
+        await startNewChat()
+      },
+      saveAndCompile: () => runResumeCommand('save'),
+      compile: () => runResumeCommand('compile'),
+      undo: () => runResumeCommand('undo'),
+      openPdf: async () => {
+        showWorkspaceView('resume')
+        try {
+          await window.internshipOS.resume.openPdf()
+        } catch (error) {
+          showError(error)
+        }
+      },
+      revealPdf: async () => {
+        showWorkspaceView('resume')
+        try {
+          await window.internshipOS.resume.revealPdf()
+        } catch (error) {
+          showError(error)
+        }
+      },
+      archiveResume: () => runResumeCommand('archive'),
+      createDraft: () => {
+        closeWorkspaceOverlays()
+        setView('resume')
+        openJobDraftDialog()
+      },
+      selectProfile: async (profileId) => {
+        closeWorkspaceOverlays()
+        setView('resume')
+        await selectResumeProfile(profileId)
+      },
+      selectDraft: async (draftId) => {
+        closeWorkspaceOverlays()
+        setView('resume')
+        await selectJobDraft(draftId)
+      },
+      promoteDraft: async () => {
+        closeWorkspaceOverlays()
+        setView('resume')
+        await promoteJobDraft()
+      },
+      addApplication: () => {
+        closeWorkspaceOverlays()
+        setView('tracker')
+        setEditing(newApplicationInput())
+      },
+      showApplication
+    }
+  })
 
   return (
     <div className="app-shell">
@@ -1166,6 +1303,16 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
               </>
             )}
           </div>
+          <span className="toolbar-divider compact" />
+          <button
+            className={`assistant-toolbar-button ${agentStage !== 'hidden' ? 'active' : ''}`.trim()}
+            aria-label={assistantTitle}
+            aria-pressed={agentStage !== 'hidden'}
+            onClick={toggleAssistant}
+            title={assistantTitle}
+          >
+            <Icon name="codex" /><span>Assistant</span>
+          </button>
           <button
             className="settings-button"
             aria-label="Open settings"
@@ -1188,6 +1335,11 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
             )}
           </button>
         </div>
+        <CommandPalette
+          open={commandPaletteOpen}
+          items={commandItems}
+          onClose={() => setCommandPaletteOpen(false)}
+        />
         {draftDialogOpen && resume && (
           <div
             className="draft-dialog-backdrop"
@@ -1250,6 +1402,7 @@ function MainApp({ initialSettings, onSettingsChanged }: { initialSettings: Onbo
               applications={applications}
               editing={editing}
               busy={busy}
+              highlightedApplicationId={highlightedApplicationId}
               onEdit={setEditing}
               onSave={() => void saveApplication()}
               onSaveInline={saveApplicationInline}
@@ -1515,12 +1668,13 @@ function Tracker(props: {
   applications: InternshipApplication[]
   editing: ApplicationInput | null
   busy: boolean
+  highlightedApplicationId: string | null
   onEdit: (application: ApplicationInput | null) => void
   onSave: () => void
   onSaveInline: (application: ApplicationInput) => Promise<void>
   onRemove: (id: string) => void
 }): React.JSX.Element {
-  const { applications, editing, busy, onEdit, onSave, onSaveInline, onRemove } = props
+  const { applications, editing, busy, highlightedApplicationId, onEdit, onSave, onSaveInline, onRemove } = props
   return (
     <div className="page tracker-page">
       {editing && (
@@ -1545,6 +1699,7 @@ function Tracker(props: {
             ) : applications.map((application) => (
               <InlineApplicationRow
                 application={application}
+                highlighted={application.id === highlightedApplicationId}
                 key={application.id}
                 onSave={onSaveInline}
                 onRemove={onRemove}
@@ -1559,13 +1714,16 @@ function Tracker(props: {
 
 function InlineApplicationRow({
   application,
+  highlighted,
   onSave,
   onRemove
 }: {
   application: InternshipApplication
+  highlighted: boolean
   onSave: (application: ApplicationInput) => Promise<void>
   onRemove: (id: string) => void
 }): React.JSX.Element {
+  const rowRef = useRef<HTMLTableRowElement>(null)
   const [draft, setDraft] = useState<ApplicationInput>(() => applicationInput(application))
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1574,6 +1732,10 @@ function InlineApplicationRow({
   useEffect(() => {
     if (!dirty && !saving) setDraft(applicationInput(application))
   }, [application, dirty, saving])
+
+  useEffect(() => {
+    if (highlighted) rowRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [highlighted])
 
   function update(next: ApplicationInput): void {
     setDraft(next)
@@ -1606,7 +1768,10 @@ function InlineApplicationRow({
   }
 
   return (
-    <tr className={`${dirty ? 'is-dirty' : ''} ${saving ? 'is-saving' : ''} ${saveError ? 'has-error' : ''}`}>
+    <tr
+      ref={rowRef}
+      className={`${dirty ? 'is-dirty' : ''} ${saving ? 'is-saving' : ''} ${saveError ? 'has-error' : ''} ${highlighted ? 'is-highlighted' : ''}`}
+    >
       <td>
         <input
           className="tracker-cell-input company"
